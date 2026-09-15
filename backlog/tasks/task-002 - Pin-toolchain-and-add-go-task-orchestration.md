@@ -20,9 +20,9 @@ Extend .tool-versions (currently prek, python, ruff, uv, zig 0.16.0) to add godo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `.tool-versions` pins godot, task, scons, and node in addition to the existing entries
-- [ ] #2 `task check` runs and passes, initially wrapping the existing `make` build
-- [ ] #3 taskfiles/ directory structure exists ready to receive core.yml, extension.yml, game.yml as those subsystems are built
+- [x] #1 `.tool-versions` pins godot, task, scons, and node in addition to the existing entries
+- [x] #2 `task check` runs and passes, initially wrapping the existing `make` build
+- [x] #3 taskfiles/ directory structure exists ready to receive core.yml, extension.yml, game.yml as those subsystems are built
 <!-- AC:END -->
 
 ## Evidence
