@@ -29,5 +29,8 @@ stderr.txt
 .zig-cache/
 zig-out/
 
+# Taskfile-managed local cache (zig cache dir, macOS CI's SDL 1.2 source build)
+/.cache/
+
 # Agent config
 CLAUDE.md

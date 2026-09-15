@@ -16,7 +16,8 @@ env:
 
 # Per-subsystem task files (core.yml, extension.yml, game.yml) get wired in
 # here as Phase 2+ adds those builds; do not list files that don't exist yet.
-includes: {}
+includes:
+  ci: taskfiles/ci.yml
 
 tasks:
   default:

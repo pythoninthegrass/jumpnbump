@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS (build)
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup self-hosted runner PATH
+        run: |
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+          echo "/opt/homebrew/bin:/opt/homebrew/sbin" >> "$GITHUB_PATH"
+
+      - name: Build and test
+        run: task ci:macos-check
+
+  linux:
+    name: Linux (build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: go-task/setup-task@v1
+
+      - name: Build and test
+        run: task ci:linux-check
