@@ -25,5 +25,9 @@ jnb.tmpmusic.mod
 stdout.txt
 stderr.txt
 
+# Zig build artifacts
+.zig-cache/
+zig-out/
+
 # Agent config
 CLAUDE.md
