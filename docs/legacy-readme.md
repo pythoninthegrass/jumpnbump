@@ -1,3 +1,11 @@
+# Legacy README (2004)
+
+*This is the upstream SDL/Linux port's original `README`, kept verbatim for provenance. The
+sites and email address below are dead; the compilation instructions predate this repo's
+`task`-based build (see the top-level `README.md`). Current controls, custom-level, netplay,
+and fireworks-mode usage are documented there too.*
+
+```text
 Jump n Bump
 
 This is a game for the whole family. You are cute fluffy little bunnies
@@ -59,3 +67,4 @@ at http://www.brainchilddesign.com/games/jumpnbump/index.html
 
 If you like the game or have any ideas don't hesitate to contact me
 alex@aiei.ch
+```
