@@ -2,11 +2,24 @@
   "mcpServers": {
     "backlog": {
       "command": "backlog",
-      "args": ["mcp", "start"]
+      "args": [
+        "mcp",
+        "start"
+      ]
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"]
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "godot": {
+      "command": "npx",
+      "args": ["@coding-solo/godot-mcp"],
+      "env": {
+        "DEBUG": "true"
+      }
     },
     "serena": {
       "command": "uvx",
