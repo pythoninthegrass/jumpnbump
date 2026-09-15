@@ -10,6 +10,11 @@ Jump'n'Bump — a 1998 DOS game by Brainchild Design, ported to Linux/SDL. Origi
 
 This repo is mid-port to a `core/` (Zig simulation) + `include/` (frozen C ABI) + `extension/` (GDExtension shim) + `game/` (Godot project) + `tools/` (asset pipeline) layout — see `backlog/tasks/` for the full plan. The legacy `main.c`, `sdl/`, and `modify/` tree is retained forever, not deleted once the new tree lands: it's the differential-test oracle the new Zig simulation core is checked against frame-by-frame (`TASK-008`), so any behavioral drift in the port shows up as a failing diff rather than a silent regression.
 
+## Docs
+
+- `docs/porting-playbook.md` — the incremental C-to-Zig porting procedure: one subsystem at a time, ABI-compatible exports, the no-`@import`-between-ported-modules rule, and the four-tier verification ladder (unit/differential/ABI-conformance/Godot-replay), including Jump'n'Bump's no-float simulation constraints.
+- `docs/build-layout.md` — the full target directory layout and how `core/`, `include/`, `extension/`, `game/`, and `tools/` fit together with the legacy build.
+
 ## Build
 
 Requires SDL 1.2, SDL_mixer, SDL_net, zlib, bzip2 dev packages (Debian/Ubuntu: `apt-get install libsdl-dev libsdl-mixer-dev`).
@@ -20,7 +25,7 @@ make clean      # cleans sdl/, modify/, data/, and top-level objects/binaries
 make install    # PREFIX=/usr/local by default; installs to $(PREFIX)/games and $(PREFIX)/share/jumpnbump
 ```
 
-There is no test suite and no linter configured for this project.
+Zig tests run via `core/build.zig`'s four steps (`test`/`difftest`/`abi`/`abitest` — see `docs/build-layout.md`). Linting runs through `prek`/`.pre-commit-config.yaml` (ruff, markdownlint, standard hygiene hooks). `task check` is the single documented gate.
 
 ### Build graph
 
@@ -79,6 +84,7 @@ This project uses Backlog.md MCP for all task and project management activities.
 - **When to read it**: BEFORE creating tasks, or when you're unsure whether to track work
 
 These guides cover:
+
 - Decision framework for when to create tasks
 - Search-first workflow to avoid duplicates
 - Links to detailed guides for task creation, execution, and finalization
@@ -89,4 +95,3 @@ You MUST read the overview resource to understand the complete workflow. The inf
 </CRITICAL_INSTRUCTION>
 
 <!-- BACKLOG.MD MCP GUIDELINES END -->
-

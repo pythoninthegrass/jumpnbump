@@ -1,0 +1,132 @@
+# Build layout
+
+This documents the target directory layout for the mid-port Jump'n'Bump tree and how
+`core/`, `include/`, `extension/`, `game/`, and `tools/` fit together, plus the retained
+legacy build. It's a forward-looking spec of the target shape, not a per-task rationale
+ledger — the reasoning behind a specific decision lives in that decision's task record
+under `backlog/tasks/`.
+
+## Directory layout
+
+```text
+core/          Zig simulation: physics, collision, AI, particles, game loop
+include/       jumpnbump.h — the frozen C ABI between core/ and extension/
+extension/     godot-cpp GDExtension shim, 1:1 forwarding to the C ABI
+game/          Godot 4.7.1 project (simulation/ presentation/ platform/ content/)
+tools/         Python asset pipeline + boundary/purity validator scripts
+third_party/   godot-cpp, vendored as a SHA-pinned git submodule
+
+main.c, menu.c, filter.c, fireworks.c, sdl/, modify/, data/
+               legacy SDL/C game, retained forever as the Tier-B/oracle reference
+```
+
+- **`core/`** — the deterministic Zig simulation core, ported line-for-line from `main.c`
+  and differential-tested against it. Never links libc file I/O (outside asset loading),
+  SDL, or Godot — see `docs/porting-playbook.md`'s "Core purity" rule.
+- **`include/`** — `jumpnbump.h`, the frozen ABI boundary. `core/abi.zig` is the sole
+  exporter of this surface; nothing else in `core/` may define a `jnb_*` symbol.
+- **`extension/`** — the GDExtension shim linking `core/`'s ABI into Godot: a SConstruct
+  build, `register_types.cpp` with standard godot-cpp init/terminate boilerplate, and a
+  `JumpnbumpWorld : RefCounted` GDCLASS whose methods forward 1:1 to `jnb_*` calls with no
+  game logic of its own. Depends on `third_party/godot-cpp` being vendored (done, `TASK-004`).
+- **`game/`** — the Godot project, split into four layers (mirroring
+  `~/git/neo_snake/game/`'s convention):
+  - `simulation/` — the only layer allowed to reference the GDExtension class
+  - `presentation/` — sprites, level layers, scoreboard rendering
+  - `platform/` — input routing, settings persistence, app lifecycle
+  - `content/` — data-driven config (palettes, tuning, audio manifests)
+
+  A boundary-validator script fails `task check` if any script outside `simulation/`
+  touches the GDExtension class (`TASK-014.01`).
+- **`tools/`** — Python scripts converting original `.gob` sprites, PCX levels, and
+  `.mod`/`.smp` audio into Godot-native PNG/OGG/WAV resources (`TASK-013`), plus the
+  boundary/purity validators wired into `task check`
+  (`validate_simulation_boundary.py`, `validate_abi_test_purity.py`).
+- **`third_party/godot-cpp`** — pinned to commit SHA `507ed9d840c01a3c5b2a39af8bb4000bfac30bf5`,
+  no branch or tag in `.gitmodules` — the pin is the contract, bumped only by committing a
+  new gitlink. See `extension/README.md` for the full rationale (no 4.7 tag exists upstream;
+  `api_version=4.7` is an SCons option, not a checkout).
+- **Legacy tree** (`main.c`, `sdl/`, `modify/`, `data/`) — retained forever, never deleted.
+  It's the Tier-B differential-test oracle (`docs/porting-playbook.md`); any behavioral
+  drift in the port shows up as a failing diff against it.
+
+## Build systems
+
+Three build systems are siblings — none absorbs another:
+
+- **`core/build.zig`** — scoped to `core/`, not the repo root.
+- **`extension/SConstruct`** — godot-cpp's SCons build, linking the Zig static lib via
+  `env.File(...)` so a core rebuild triggers a relink (never a bare `-l`/`-L` flag)
+  (`TASK-012.04`).
+- **The legacy top-level `Makefile`** — unchanged, still the only way to build the SDL
+  binary, `gobpack`/`jnbpack`/`jnbunpack`, and `data/jumpbump.dat`.
+
+`taskfile.yml` is the single entry point above all three. `includes: {}` is currently empty
+by design — `taskfiles/core.yml`, `taskfiles/extension.yml`, `taskfiles/game.yml` get wired
+in as each corresponding build lands, not before.
+
+## `zig build` steps
+
+Defined in `core/build.zig`. Zig 0.16.0-specific notes worth not rediscovering: there is no
+`b.addStaticLibrary` — static libraries go through
+`b.addLibrary(.{ .linkage = .static, ... })`; `Module.linkLibrary` lives on the module, not
+on `Build.Step.Compile`.
+
+- **`test`** — Tier-A unit tests. Iterates `unit_test_files`, currently empty; each
+  `TASK-011.*` port appends its module's test file.
+- **`difftest`** — Tier-B differential tests: compiles the pre-port `.c` a second time with
+  preprocessor-renamed symbols (zelda3's `compileRenamedCRef` technique), links it against
+  the Zig port, and replays the `TASK-008` corpus, diffing checksums per tick. Iterates
+  `diff_test_files`, currently empty (`TASK-008.04` builds the harness).
+- **`abi`** — builds `core/abi.zig` as a static library named `jumpnbump`, `.pic = true`
+  (Zig library code, positioned for a later `ld -shared` step — matches neo_snake's
+  convention, since non-PIC relocations in a static archive fail there). Installs the
+  artifact.
+- **`abitest`** — Tier-C ABI conformance suite, links `abi_lib` via `Module.linkLibrary`.
+  Once `include/jumpnbump.h` exists (`TASK-012.01`), reaches `core/abi.zig` exclusively
+  through `@cImport`, never by importing core Zig modules directly — enforced separately by
+  `tools/validate_abi_test_purity.py`.
+
+## `task check` wiring
+
+Today: `check` runs `make` (the legacy build) — the only gate that exists yet.
+
+Target ordering, cheapest static check first:
+
+1. `core:test` (Tier-A)
+2. `core:abi-header-check` — `zig cc -std=c11 -c core/abi_header_check.c -o /dev/null`,
+   proving `include/jumpnbump.h` compiles standalone with zero warnings
+3. `core:abi-symbols` — `nm -g --defined-only` on the built core, asserting every symbol
+   matches `^_?jnb_`
+4. `core:abitest-purity` — the `@cImport`-only enforcement script
+5. `core:abitest` (Tier-C)
+6. `core:difftest` (Tier-B)
+7. The Godot/gdUnit4 Tier-D replay step (Phase 5)
+
+Each step lands as its owning task completes; `check` is only extended, never reordered
+around a step that doesn't exist yet.
+
+## Toolchain
+
+Pinned in `.tool-versions`, resolved via mise:
+
+- `zig 0.16.0`
+- `godot 4.7.1-stable`
+- `pipx:scons 4.11.1`
+- `python 3.13.14`, `uv 0.11.32`, `ruff 0.15.20`
+- `task 3.49.1`, `prek 0.3.2`, `node 24.12.0`
+
+`taskfile.yml` prepends `~/.local/share/mise/shims` ahead of the system `PATH` so pinned
+versions always win, and sets `ZIG_GLOBAL_CACHE_DIR` to a repo-local
+`.cache/zig` directory rather than the user cache.
+
+## Constraints
+
+- **No allocator, no libc in `core/` library code**, outside `core/abi.zig` — this is a
+  property of the ported simulation code itself, not something `build.zig` can assert.
+  `core/abi.zig` is the deliberate exception: it is the FFI boundary and owns
+  caller-provided memory.
+- **`include/jumpnbump.h` may only be exported from `core/abi.zig`.** No other `core/*.zig`
+  file may define a symbol matching the frozen ABI surface.
+- **One build graph.** Future `core/*.zig` files extend the existing `core/build.zig`
+  rather than inventing a second one.
