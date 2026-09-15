@@ -6,6 +6,10 @@ This file provides guidance to AI agents when working with code in this reposito
 
 Jump'n'Bump — a 1998 DOS game by Brainchild Design, ported to Linux/SDL. Original source is old, monolithic C (the author's own words: "the code is poorly designed, making changes to it is hard, if not impossible"). Treat `main.c` as legacy code to work around carefully rather than a clean codebase to refactor freely.
 
+## Target layout
+
+This repo is mid-port to a `core/` (Zig simulation) + `include/` (frozen C ABI) + `extension/` (GDExtension shim) + `game/` (Godot project) + `tools/` (asset pipeline) layout — see `backlog/tasks/` for the full plan. The legacy `main.c`, `sdl/`, and `modify/` tree is retained forever, not deleted once the new tree lands: it's the differential-test oracle the new Zig simulation core is checked against frame-by-frame (`TASK-008`), so any behavioral drift in the port shows up as a failing diff rather than a silent regression.
+
 ## Build
 
 Requires SDL 1.2, SDL_mixer, SDL_net, zlib, bzip2 dev packages (Debian/Ubuntu: `apt-get install libsdl-dev libsdl-mixer-dev`).
