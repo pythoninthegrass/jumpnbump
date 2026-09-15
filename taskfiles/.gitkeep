@@ -1,0 +1,2 @@
+# Placeholder so the per-subsystem task directory survives an empty checkout.
+# core.yml, extension.yml and game.yml land with the Phase 2+ builds.

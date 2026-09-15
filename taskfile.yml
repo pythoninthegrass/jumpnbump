@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+set: ['e', 'u', 'pipefail']
+shopt: ['globstar']
+
+vars:
+  MISE_SHIMS: "{{.HOME}}/.local/share/mise/shims"
+  ZIG_GLOBAL_CACHE_DIR: "{{.ROOT_DIR}}/.cache/zig"
+
+env:
+  # mise-shimmed binaries must win over a stale system PATH entry.
+  PATH: "{{.MISE_SHIMS}}:{{.PATH}}"
+  ZIG_GLOBAL_CACHE_DIR: "{{.ZIG_GLOBAL_CACHE_DIR}}"
+
+# Per-subsystem task files (core.yml, extension.yml, game.yml) get wired in
+# here as Phase 2+ adds those builds; do not list files that don't exist yet.
+includes: {}
+
+tasks:
+  default:
+    desc: "Default task"
+    cmds:
+      - task --list
+
+  check:
+    desc: "The one documented build/test command (currently the legacy make build)"
+    cmds:
+      - make
