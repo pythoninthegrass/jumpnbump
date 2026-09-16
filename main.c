@@ -67,6 +67,10 @@ char cur_pal[768];
 
 int ai[JNB_MAX_PLAYERS];
 
+/* incremented on every rnd() call; stands in for rand()'s unobservable
+ * internal state in the headless canonical-state checksum (docs/checksum-format.md) */
+unsigned int rnd_call_count = 0;
+
 unsigned int ban_map[17][22] = {
 	{1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 	{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0},
@@ -1236,6 +1240,76 @@ static void collision_check(void)
 	}
 }
 
+/* FNV-1a 32-bit, folding in `value` as 4 little-endian bytes regardless of
+ * host endianness. See docs/checksum-format.md for the full byte layout. */
+static unsigned int checksum_fold_u32(unsigned int hash, unsigned int value)
+{
+	int c1;
+	unsigned char byte;
+
+	for (c1 = 0; c1 < 4; c1++) {
+		byte = (unsigned char)((value >> (c1 * 8)) & 0xff);
+		hash ^= byte;
+		hash *= 16777619u;
+	}
+	return hash;
+}
+
+/* Canonical per-frame checksum over the simulation-relevant state: player[],
+ * objects[], ban_map, and the RNG call count (docs/checksum-format.md). */
+static void headless_emit_checksum(unsigned int frame_num)
+{
+	unsigned int hash = 2166136261u; /* FNV-1a 32-bit offset basis */
+	int c1, c2;
+
+	hash = checksum_fold_u32(hash, frame_num);
+	hash = checksum_fold_u32(hash, rnd_call_count);
+
+	for (c1 = 0; c1 < JNB_MAX_PLAYERS; c1++) {
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].action_left);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].action_up);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].action_right);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].enabled);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].dead_flag);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].bumps);
+		for (c2 = 0; c2 < JNB_MAX_PLAYERS; c2++)
+			hash = checksum_fold_u32(hash, (unsigned int)player[c1].bumped[c2]);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].x);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].y);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].x_add);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].y_add);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].direction);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].jump_ready);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].jump_abort);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].in_water);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].anim);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].frame);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].frame_tick);
+		hash = checksum_fold_u32(hash, (unsigned int)player[c1].image);
+	}
+
+	for (c1 = 0; c1 < NUM_OBJECTS; c1++) {
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].used);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].type);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].x);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].y);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].x_add);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].y_add);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].x_acc);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].y_acc);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].anim);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].frame);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].ticks);
+		hash = checksum_fold_u32(hash, (unsigned int)objects[c1].image);
+	}
+
+	for (c1 = 0; c1 < 17; c1++)
+		for (c2 = 0; c2 < 22; c2++)
+			hash = checksum_fold_u32(hash, ban_map[c1][c2]);
+
+	printf("FRAME %u CHECKSUM %08x\n", frame_num, hash);
+}
+
 static void game_loop(void) {
 	int mod_vol, sfx_vol;
 	int update_count = 1;
@@ -1309,6 +1383,13 @@ static void game_loop(void) {
 			}
 
 			dj_mix();
+
+			if (main_info.headless) {
+				static unsigned int headless_frame_num = 0;
+
+				headless_emit_checksum(headless_frame_num);
+				headless_frame_num++;
+			}
 
 			if (update_count == 1) {
 				int c2;
@@ -3448,6 +3529,7 @@ void deinit_program(void)
 
 unsigned short rnd(unsigned short max)
 {
+	rnd_call_count++;
 #if (RAND_MAX < 0x7fff)
 #error "rand returns too small values"
 #elif (RAND_MAX == 0x7fff)
