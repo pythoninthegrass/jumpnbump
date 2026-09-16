@@ -1323,16 +1323,18 @@ static void game_loop(void) {
 					}
 				}
 
-				draw_begin();
+				if (!main_info.headless) {
+					draw_begin();
 
-				draw_pobs(main_info.draw_page);
+					draw_pobs(main_info.draw_page);
 
-				dj_mix();
+					dj_mix();
 
-				if (flies_enabled)
-					draw_flies(main_info.draw_page);
+					if (flies_enabled)
+						draw_flies(main_info.draw_page);
 
-				draw_end();
+					draw_end();
+				}
 			}
 
 			if (mod_fade_direction == 1) {
@@ -1371,28 +1373,30 @@ static void game_loop(void) {
 				break;
 
 			if (update_count == 1) {
-				if (update_palette == 1) {
-					setpalette(0, 256, cur_pal);
-					update_palette = 0;
-				}
-
 				main_info.draw_page ^= 1;
 				main_info.view_page ^= 1;
 
-				flippage(main_info.view_page);
+				if (!main_info.headless) {
+					if (update_palette == 1) {
+						setpalette(0, 256, cur_pal);
+						update_palette = 0;
+					}
 
-				wait_vrt(1);
+					flippage(main_info.view_page);
 
-				draw_begin();
+					wait_vrt(1);
 
-				if (flies_enabled)
-					redraw_flies_background(main_info.draw_page);
+					draw_begin();
 
-				redraw_pob_backgrounds(main_info.draw_page);
+					if (flies_enabled)
+						redraw_flies_background(main_info.draw_page);
 
-				draw_leftovers(main_info.draw_page);
+					redraw_pob_backgrounds(main_info.draw_page);
 
-				draw_end();
+					draw_leftovers(main_info.draw_page);
+
+					draw_end();
+				}
 			}
 
 			update_count--;
@@ -1441,7 +1445,7 @@ static int menu_loop(void)
 
 	while (1) {
 
-		if (!is_net)
+		if (!is_net && !main_info.headless)
 			if (menu() != 0)
 				deinit_program();
 
@@ -1453,16 +1457,18 @@ static int menu_loop(void)
 			deinit_program();
 		}
 
-		memset(cur_pal, 0, 768);
-		setpalette(0, 256, cur_pal);
+		if (!main_info.headless) {
+			memset(cur_pal, 0, 768);
+			setpalette(0, 256, cur_pal);
 
-		recalculate_gob(&rabbit_gobs, pal);
-		recalculate_gob(&object_gobs, pal);
-		recalculate_gob(&number_gobs, pal);
+			recalculate_gob(&rabbit_gobs, pal);
+			recalculate_gob(&object_gobs, pal);
+			recalculate_gob(&number_gobs, pal);
 
-		flippage(1);
-		register_background(background_pic, pal);
-		flippage(0);
+			flippage(1);
+			register_background(background_pic, pal);
+			flippage(0);
+		}
 
 		if (flies_enabled) {
 			s1 = rnd(250) + 50;
@@ -1490,6 +1496,12 @@ static int menu_loop(void)
 		main_info.page_info[1].num_pobs = 0;
 		main_info.view_page = 0;
 		main_info.draw_page = 1;
+
+		if (main_info.headless) {
+			/* headless skips menu()'s walk-in sequence, so enable player 1 directly */
+			ai[0] = 0;
+			player[0].enabled = 1;
+		}
 
 		game_loop();
 
@@ -1519,6 +1531,16 @@ static int menu_loop(void)
 
 		memset(mask_pic, 0, JNB_WIDTH*JNB_HEIGHT);
 		register_mask(mask_pic);
+
+		if (main_info.headless) {
+			for (c1 = 0; c1 < JNB_MAX_PLAYERS; c1++) {
+				printf("player %d: enabled=%d x=%d y=%d x_add=%d y_add=%d anim=%d frame=%d image=%d bumps=%d\n",
+					c1, player[c1].enabled, player[c1].x, player[c1].y,
+					player[c1].x_add, player[c1].y_add, player[c1].anim,
+					player[c1].frame, player[c1].image, player[c1].bumps);
+			}
+			return 0;
+		}
 
 		register_background(NULL, NULL);
 
@@ -2997,8 +3019,6 @@ int init_program(int argc, char *argv[], char *pal)
 		return 1;
 #endif
 
-	srand(time(NULL));
-
 	if (hook_keyb_handler() != 0)
 		return 1;
 
@@ -3065,8 +3085,20 @@ int init_program(int argc, char *argv[], char *pal)
 					if (stricmp(argv[c1 + 1], "3") == 0)
 						force3 = 1;
 				}
+			} else if (stricmp(argv[c1], "-headless") == 0) {
+				main_info.headless = 1;
+				main_info.no_sound = 1;
+				main_info.joy_enabled = 0;
 			}
-			else if (strstr(argv[1],"-v")) {
+			else if (stricmp(argv[c1], "-seed") == 0) {
+				if (c1 < (argc - 1))
+					main_info.headless_seed = (unsigned int)strtoul(argv[c1 + 1], NULL, 10);
+			}
+			else if (stricmp(argv[c1], "-input") == 0) {
+				if (c1 < (argc - 1))
+					main_info.headless_input_path = argv[c1 + 1];
+			}
+			else if (stricmp(argv[c1],"-v") == 0) {
 				printf("jumpnbump %s compiled %s at %s with",JNB_VERSION,__DATE__,__TIME__);
 #ifndef USE_NET
 				printf("out");
@@ -3074,7 +3106,7 @@ int init_program(int argc, char *argv[], char *pal)
 				printf(" network support.\n");
 				return 1;
 			}
-			else if (strstr(argv[1],"-h")) {
+			else if (stricmp(argv[c1],"-h") == 0) {
 				printf("Usage: jumpnbump [OPTION]...\n");
 				printf("\n");
 				printf("  -h                       this help\n");
@@ -3093,11 +3125,16 @@ int init_program(int argc, char *argv[], char *pal)
 				printf("  -mirror                  play with mirrored level\n");
 				printf("  -scaleup                 play with doubled resolution (800x512)\n");
 				printf("  -musicnosound            play with music but without sound\n");
+				printf("  -headless                run without video/audio, driven by -seed/-input\n");
+				printf("  -seed n                  RNG seed for -headless (deterministic replay)\n");
+				printf("  -input trace.jsonl       scripted per-frame input for -headless\n");
 				printf("\n");
 				return 1;
 			}
 		}
 	}
+
+	srand(main_info.headless ? main_info.headless_seed : (unsigned int)time(NULL));
 
 	preread_datafile(datfile_name);
 
@@ -3282,13 +3319,15 @@ all provided the user didn't choose one on the commandline. */
 		pal[(240 + c1) * 3 + 2] = c1 << 2;
 	}
 
-	setpalette(0, 256, pal);
+	if (!main_info.headless) {
+		setpalette(0, 256, pal);
+
+		recalculate_gob(&font_gobs, pal);
+	}
 
 	init_inputs();
 
-	recalculate_gob(&font_gobs, pal);
-
-	if (main_info.joy_enabled == 1 && main_info.fireworks == 0) {
+	if (main_info.joy_enabled == 1 && main_info.fireworks == 0 && !main_info.headless) {
 		load_flag = 0;
 		put_text(0, 200, 40, "JOYSTICK CALIBRATION", 2);
 		put_text(0, 200, 100, "Move the joystick to the", 2);

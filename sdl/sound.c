@@ -255,7 +255,8 @@ char dj_init(void)
 	int audio_channels = 2;
 	int audio_buffers = 4096;
 
-	open_screen();
+	if (!main_info.headless)
+		open_screen();
 
 	if (main_info.no_sound)
 		return 0;

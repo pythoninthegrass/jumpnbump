@@ -185,6 +185,9 @@ typedef struct {
 typedef struct {
 	int joy_enabled, mouse_enabled;
 	int no_sound, music_no_sound, no_gore, fireworks;
+	int headless;
+	unsigned int headless_seed;
+	char *headless_input_path;
 	char error_str[256];
 	int draw_page, view_page;
 	struct {

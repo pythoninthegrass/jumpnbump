@@ -300,12 +300,71 @@ int key_pressed(int key)
 
 #endif /* USE_KAILLERA */
 
+static const struct { const char *name; int key; } headless_key_names[] = {
+	{ "p1_left", KEY_PL1_LEFT }, { "p1_right", KEY_PL1_RIGHT }, { "p1_jump", KEY_PL1_JUMP },
+	{ "p2_left", KEY_PL2_LEFT }, { "p2_right", KEY_PL2_RIGHT }, { "p2_jump", KEY_PL2_JUMP },
+	{ "p3_left", KEY_PL3_LEFT }, { "p3_right", KEY_PL3_RIGHT }, { "p3_jump", KEY_PL3_JUMP },
+	{ "p4_left", KEY_PL4_LEFT }, { "p4_right", KEY_PL4_RIGHT }, { "p4_jump", KEY_PL4_JUMP },
+};
+#define NUM_HEADLESS_KEY_NAMES (sizeof(headless_key_names) / sizeof(headless_key_names[0]))
+
+static FILE *headless_input_fp = NULL;
+static int headless_input_opened = 0;
+
+static void headless_load_frame_keys(void)
+{
+	char line[512];
+	char *keys_start, *array_end;
+	size_t c1;
+
+	for (c1 = 0; c1 < NUM_HEADLESS_KEY_NAMES; c1++)
+		keyb[(unsigned char)headless_key_names[c1].key] = 0;
+
+	if (!headless_input_opened) {
+		headless_input_opened = 1;
+		if (main_info.headless_input_path != NULL)
+			headless_input_fp = fopen(main_info.headless_input_path, "r");
+	}
+
+	if (headless_input_fp == NULL) {
+		/* no trace given, or it failed to open: end the run like an ESC keypress */
+		keyb[1] = 1;
+		return;
+	}
+
+	if (fgets(line, sizeof(line), headless_input_fp) == NULL) {
+		/* trace exhausted: end the run like an ESC keypress */
+		keyb[1] = 1;
+		return;
+	}
+
+	keys_start = strstr(line, "\"keys\"");
+	if (keys_start == NULL)
+		return;
+	keys_start = strchr(keys_start, '[');
+	if (keys_start == NULL)
+		return;
+	array_end = strchr(keys_start, ']');
+	if (array_end != NULL)
+		*array_end = '\0';
+
+	for (c1 = 0; c1 < NUM_HEADLESS_KEY_NAMES; c1++) {
+		if (strstr(keys_start, headless_key_names[c1].name) != NULL)
+			keyb[(unsigned char)headless_key_names[c1].key] = 1;
+	}
+}
+
 int intr_sysupdate()
 {
 	SDL_Event e;
 	int i = 0;
 	static int last_time = 0;
 	int now, time_diff;
+
+	if (main_info.headless) {
+		headless_load_frame_keys();
+		return 1;
+	}
 
 	while (SDL_PollEvent(&e)) {
 		switch (e.type) {
