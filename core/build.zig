@@ -46,7 +46,7 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
@@ -66,15 +66,40 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-B differential tests: behavioral-equivalence checks between a
 // pre-port C reference (symbols renamed via the preprocessor, following
 // zelda3's compileRenamedCRef technique) and its ported .zig module, replayed
-// over the TASK-008 corpus. rnd_difftest.zig (TASK-008.04) is a trivial
-// passthrough pilot proving the harness end-to-end; real corpus-replay
-// entries are added as TASK-011.* ports land.
+// over the TASK-008 corpus. rnd_difftest.zig started as the TASK-008.04
+// harness pilot; as of TASK-011.01 it carries the real rnd(), fixed16 and
+// world-layout differentials. Corpus-replay entries join as later TASK-011.*
+// ports land.
 const diff_test_files = [_][]const u8{"rnd_difftest.zig"};
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
 
+    // -fwrapv (added inside compileRenamedCRef) matters most here: rnd()'s
+    // `%` against a value that can be INT_MIN is UB the oracle relies on
+    // wrapping through, and UBSan checks would abort the difftest binary
+    // instead.
     const rnd_ref = compileRenamedCRef(b, target, optimize, "rnd_c_ref", "c_ref/rnd.c", &.{"rnd"});
+    // TASK-011.01: the fixed16 helpers are renamed at their _ref suffix so
+    // each C expression keeps a name distinct from the Zig helper it mirrors.
+    const fixed16_ref = compileRenamedCRef(b, target, optimize, "fixed16_c_ref", "c_ref/fixed16.c", &.{
+        "fp_add_ref",
+        "fp_sub_ref",
+        "fp_neg_ref",
+        "fp_mul_small_ref",
+        "fp_pixel_shr16_ref",
+        "fp_pixel_shr20_ref",
+        "fp_sar_int_ref",
+        "fp_bounce_quarter_ref",
+        "fp_to_fixed_ref",
+        "fp_from_pixel_shl_ref",
+        "fp_wrap_mask_shl16_ref",
+        "fp_wrap_mask_sub_shl16_ref",
+        "fp_wrap_hi_shl16_ref",
+        "fp_wrap_hi_plus15_shl16_ref",
+        "fp_pixel_shl4_ref",
+        "fp_to_tile20_ref",
+    });
 
     for (diff_test_files) |file| {
         const mod = b.createModule(.{
@@ -86,6 +111,7 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
         const mod_test = b.addTest(.{ .root_module = mod });
         if (std.mem.eql(u8, file, "rnd_difftest.zig")) {
             mod_test.root_module.addObjectFile(rnd_ref);
+            mod_test.root_module.addObjectFile(fixed16_ref);
         }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
@@ -108,8 +134,18 @@ fn compileRenamedCRef(b: *std.Build, target: std.Build.ResolvedTarget, optimize:
         .optimize = optimize,
         .link_libc = true,
     });
-    const dflags = b.allocator.alloc([]const u8, syms.len) catch @panic("OOM");
-    for (syms, 0..) |sym, i|
+    // -fwrapv: signed overflow is UB in the abstract and this codebase
+    // relies on two's-complement wraparound in practice (the oracle
+    // Makefile builds main.c with -ffast-math, which implies the same
+    // no-trapping stance). Without it, Zig's own clang emits UBSan checks
+    // into the reference's arithmetic — which aborts the difftest binary
+    // the moment a helper is probed at an overflow corner, instead of
+    // returning the wrap the compiled oracle actually performs. The
+    // difftest asserts zig-vs-reference agreement, which holds for any
+    // flag set where the reference doesn't trap.
+    const dflags = b.allocator.alloc([]const u8, syms.len + 1) catch @panic("OOM");
+    dflags[0] = "-fwrapv";
+    for (syms, 1..) |sym, i|
         dflags[i] = b.fmt("-D{s}=c_{s}", .{ sym, sym });
     ref_mod.addCSourceFile(.{ .file = b.path(src), .flags = dflags });
     const ref_obj = b.addObject(.{
