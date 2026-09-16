@@ -1,12 +1,13 @@
 /*
- * Phase 1 (TASK-008.04) differential-test pilot.
+ * Renamed-C reference for core/rnd.zig (TASK-011.01).
  *
- * main.c's rnd() extracted verbatim, compiled here as the renamed-C-reference
- * side of the difftest harness (core/build.zig's compileRenamedCRef renames
- * this to c_rnd) so core/rnd_difftest.zig has something concrete to diff the
- * trivial core/rnd.zig passthrough against before any real TASK-011.* module
- * exists. Keep this in sync with main.c's rnd() by hand; when TASK-011 ports
- * the real RNG call sites, this pilot is retired in favor of the real module.
+ * main.c's rnd() (main.c:3562) with the rnd_call_count bookkeeping
+ * stripped — that counter is checksum scaffolding (docs/checksum-format.md),
+ * not part of the RNG formula, and it lives in the ported module instead.
+ * Compiled as the renamed-C-reference side of the difftest harness
+ * (core/build.zig's compileRenamedCRef renames this to c_rnd) so
+ * core/rnd_difftest.zig can drive both sides over 10,000+-call sequences.
+ * Keep in sync with main.c's rnd() by hand.
  */
 #include <stdlib.h>
 
