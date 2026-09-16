@@ -1,7 +1,7 @@
 ---
 id: TASK-011.06
 title: Port update_flies to Zig
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:15'
 labels: []
@@ -21,5 +21,5 @@ Port main.c's update_flies (the 20-slot fly swarm simulation) to Zig.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 zig build difftest passes against the Phase 1 corpus for flies-enabled traces, with zero checksum mismatches
+- [x] #1 zig build difftest passes against the Phase 1 corpus for flies-enabled traces, with zero checksum mismatches
 <!-- AC:END -->

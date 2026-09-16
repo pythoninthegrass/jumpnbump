@@ -46,7 +46,7 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
@@ -58,6 +58,21 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
             .link_libc = true,
         });
         mod.linkSystemLibrary("bz2", .{});
+        // TASK-011.06: flies.zig reaches rnd() as an extern fn (the
+        // no-@import rule), so its Tier-A binary links rnd.zig's object the
+        // same way the difftest entries link their renamed-C references.
+        if (std.mem.eql(u8, file, "flies.zig")) {
+            const rnd_obj = b.addObject(.{
+                .name = "flies_unit_rnd",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("rnd.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod.addObjectFile(rnd_obj.getEmittedBin());
+        }
         const mod_test = b.addTest(.{ .root_module = mod });
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
@@ -70,7 +85,7 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // harness pilot; as of TASK-011.01 it carries the real rnd(), fixed16 and
 // world-layout differentials. Corpus-replay entries join as later TASK-011.*
 // ports land.
-const diff_test_files = [_][]const u8{"rnd_difftest.zig"};
+const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "flies_difftest.zig" };
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
@@ -100,6 +115,14 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
         "fp_pixel_shl4_ref",
         "fp_to_tile20_ref",
     });
+    // TASK-011.06: get_closest_player_to_point/update_flies/spawn_flies
+    // renamed so they don't collide with flies.zig's own exports of those
+    // names.
+    const flies_ref = compileRenamedCRef(b, target, optimize, "flies_c_ref", "c_ref/flies.c", &.{
+        "get_closest_player_to_point",
+        "update_flies",
+        "spawn_flies",
+    });
 
     for (diff_test_files) |file| {
         const mod = b.createModule(.{
@@ -108,10 +131,15 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             .optimize = optimize,
             .link_libc = true,
         });
+        mod.linkSystemLibrary("m", .{});
         const mod_test = b.addTest(.{ .root_module = mod });
         if (std.mem.eql(u8, file, "rnd_difftest.zig")) {
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(fixed16_ref);
+        }
+        if (std.mem.eql(u8, file, "flies_difftest.zig")) {
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/flies_harness.c"), .flags = &.{"-fwrapv"} });
+            mod_test.root_module.addObjectFile(flies_ref);
         }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
