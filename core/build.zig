@@ -70,7 +70,7 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // harness pilot; as of TASK-011.01 it carries the real rnd(), fixed16 and
 // world-layout differentials. Corpus-replay entries join as later TASK-011.*
 // ports land.
-const diff_test_files = [_][]const u8{"rnd_difftest.zig"};
+const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig" };
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
@@ -82,6 +82,7 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
     const rnd_ref = compileRenamedCRef(b, target, optimize, "rnd_c_ref", "c_ref/rnd.c", &.{"rnd"});
     // TASK-011.01: the fixed16 helpers are renamed at their _ref suffix so
     // each C expression keeps a name distinct from the Zig helper it mirrors.
+    const cpu_move_ref = compileRenamedCRefSanitized(b, target, optimize, "cpu_move_c_ref", "c_ref/cpu_move.c", &.{ "cpu_move_ref", "map_tile_ref" }, .off);
     const fixed16_ref = compileRenamedCRef(b, target, optimize, "fixed16_c_ref", "c_ref/fixed16.c", &.{
         "fp_add_ref",
         "fp_sub_ref",
@@ -113,6 +114,10 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(fixed16_ref);
         }
+        if (std.mem.eql(u8, file, "cpu_move_difftest.zig")) {
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/cpu_move_harness.c"), .flags = &.{"-fwrapv"} });
+            mod_test.root_module.addObjectFile(cpu_move_ref);
+        }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
 }
@@ -129,10 +134,24 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
 // invocation on macOS). Ported verbatim from zelda3's build.zig
 // (compileRenamedCRef).
 fn compileRenamedCRef(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, name: []const u8, src: []const u8, syms: []const []const u8) std.Build.LazyPath {
+    return compileRenamedCRefSanitized(b, target, optimize, name, src, syms, null);
+}
+
+// cpu_move.c (TASK-011.05) deliberately exercises main.c's own map_tile
+// bounds-check mixup (pos_x checked against 17, pos_y against 22, on a
+// 22-column/17-row grid), reading past ban_map[][] the same way the real
+// oracle binary does. Zig's C frontend instruments static-array indexing
+// with the same runtime bounds checks as Zig's own arrays in Debug/
+// ReleaseSafe, which would trap on that read instead of letting it fall
+// through to whatever memory follows — sanitize_c = .off restores the
+// oracle's actual (unsafe, but not undefined for this shared-memory
+// harness) behavior for just this one reference object.
+fn compileRenamedCRefSanitized(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, name: []const u8, src: []const u8, syms: []const []const u8, sanitize_c: ?std.zig.SanitizeC) std.Build.LazyPath {
     const ref_mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .sanitize_c = sanitize_c,
     });
     // -fwrapv: signed overflow is UB in the abstract and this codebase
     // relies on two's-complement wraparound in practice (the oracle
