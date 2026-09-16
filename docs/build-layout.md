@@ -75,9 +75,11 @@ on `Build.Step.Compile`.
 - **`test`** — Tier-A unit tests. Iterates `unit_test_files`, currently empty; each
   `TASK-011.*` port appends its module's test file.
 - **`difftest`** — Tier-B differential tests: compiles the pre-port `.c` a second time with
-  preprocessor-renamed symbols (zelda3's `compileRenamedCRef` technique), links it against
-  the Zig port, and replays the `TASK-008` corpus, diffing checksums per tick. Iterates
-  `diff_test_files`, currently empty (`TASK-008.04` builds the harness).
+  preprocessor-renamed symbols (zelda3's `compileRenamedCRef` technique, ported into
+  `core/build.zig`), links it against the Zig port, and replays the `TASK-008` corpus,
+  diffing checksums per tick. Iterates `diff_test_files`, which holds `rnd_difftest.zig`
+  (`TASK-008.04`'s trivial passthrough pilot — no real per-tick corpus replay yet, since
+  that needs an actual ported module's state; real entries land as `TASK-011.*` ports do).
 - **`abi`** — builds `core/abi.zig` as a static library named `jumpnbump`, `.pic = true`
   (Zig library code, positioned for a later `ld -shared` step — matches neo_snake's
   convention, since non-PIC relocations in a static archive fail there). Installs the

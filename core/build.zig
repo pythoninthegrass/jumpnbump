@@ -39,12 +39,16 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-B differential tests: behavioral-equivalence checks between a
 // pre-port C reference (symbols renamed via the preprocessor, following
 // zelda3's compileRenamedCRef technique) and its ported .zig module, replayed
-// over the TASK-008 corpus. Empty until TASK-008.04 builds the renamed-C-ref
-// harness and a TASK-011.* module exists to diff against it.
-const diff_test_files = [_][]const u8{};
+// over the TASK-008 corpus. rnd_difftest.zig (TASK-008.04) is a trivial
+// passthrough pilot proving the harness end-to-end; real corpus-replay
+// entries are added as TASK-011.* ports land.
+const diff_test_files = [_][]const u8{"rnd_difftest.zig"};
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
+
+    const rnd_ref = compileRenamedCRef(b, target, optimize, "rnd_c_ref", "c_ref/rnd.c", &.{"rnd"});
+
     for (diff_test_files) |file| {
         const mod = b.createModule(.{
             .root_source_file = b.path(file),
@@ -53,8 +57,39 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             .link_libc = true,
         });
         const mod_test = b.addTest(.{ .root_module = mod });
+        if (std.mem.eql(u8, file, "rnd_difftest.zig")) {
+            mod_test.root_module.addObjectFile(rnd_ref);
+        }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
+}
+
+// Compile a pre-port C source to an object with each of `syms` renamed to
+// c_<name>, so it can link alongside the ported Zig module (which owns the
+// original names) without colliding. The rename happens at the preprocessor
+// level (`-D<sym>=c_<sym>`) rather than post-hoc with objcopy: the
+// preprocessor rewrites every token occurrence in the TU (the definition and
+// any same-TU references), which matches objcopy's symbol-table rewrite
+// (definitions plus undefined cross-TU references) and, unlike objcopy,
+// needs no external tool and works identically on ELF and Mach-O (whose
+// leading-underscore symbol names silently defeat a bare-name objcopy
+// invocation on macOS). Ported verbatim from zelda3's build.zig
+// (compileRenamedCRef).
+fn compileRenamedCRef(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, name: []const u8, src: []const u8, syms: []const []const u8) std.Build.LazyPath {
+    const ref_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const dflags = b.allocator.alloc([]const u8, syms.len) catch @panic("OOM");
+    for (syms, 0..) |sym, i|
+        dflags[i] = b.fmt("-D{s}=c_{s}", .{ sym, sym });
+    ref_mod.addCSourceFile(.{ .file = b.path(src), .flags = dflags });
+    const ref_obj = b.addObject(.{
+        .name = name,
+        .root_module = ref_mod,
+    });
+    return ref_obj.getEmittedBin();
 }
 
 // abi.zig (TASK-012.02) is the sole Zig file permitted to `export fn` the
