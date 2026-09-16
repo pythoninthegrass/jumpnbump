@@ -188,6 +188,8 @@ typedef struct {
 	int headless;
 	unsigned int headless_seed;
 	char *headless_input_path;
+	int headless_players;
+	unsigned int headless_ai_mask;
 	char error_str[256];
 	int draw_page, view_page;
 	struct {

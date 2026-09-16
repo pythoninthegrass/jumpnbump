@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 1,
+  "headless_ai_mask": 0,
+  "extra_flags": ["-noflies"],
+  "mechanic": "identical input to 01-single-player-basic but with -noflies: flies_enabled gates the fly spawn/update rnd() draws, so rnd_call_count (and every checksum built from it) diverges from 01 even though the player's own trajectory is identical"
+}

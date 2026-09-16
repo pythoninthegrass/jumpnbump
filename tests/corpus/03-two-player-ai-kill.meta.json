@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 2,
+  "headless_ai_mask": 1,
+  "extra_flags": [],
+  "mechanic": "AI on (player 0), CPU chases and bump-kills the idle player 1; gore on (default)"
+}

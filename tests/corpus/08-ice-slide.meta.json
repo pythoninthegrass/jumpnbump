@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 1,
+  "headless_ai_mask": 0,
+  "extra_flags": [],
+  "mechanic": "player 0 stands and slides on a BAN_ICE tile, exercising the reduced-friction acceleration/deceleration branch"
+}

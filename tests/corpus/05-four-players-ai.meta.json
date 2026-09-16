@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 4,
+  "headless_ai_mask": 15,
+  "extra_flags": [],
+  "mechanic": "all 4 players enabled and CPU-controlled; exercises the full JNB_MAX_PLAYERS roster and multiple concurrent bump-kills"
+}

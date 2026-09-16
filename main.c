@@ -1389,6 +1389,18 @@ static void game_loop(void) {
 
 				headless_emit_checksum(headless_frame_num);
 				headless_frame_num++;
+#ifdef JNB_HEADLESS_DEBUG_STATE
+				{
+					int dc;
+					for (dc = 0; dc < JNB_MAX_PLAYERS; dc++) {
+						if (player[dc].enabled)
+							fprintf(stderr, "DEBUG f=%u p=%d x=%d y=%d xa=%d ya=%d inw=%d bumps=%d feet=%u\n",
+								headless_frame_num - 1, dc, player[dc].x, player[dc].y,
+								player[dc].x_add, player[dc].y_add, player[dc].in_water, player[dc].bumps,
+								GET_BAN_MAP_XY(player[dc].x >> 16, (player[dc].y >> 16) + 16));
+					}
+				}
+#endif
 			}
 
 			if (update_count == 1) {
@@ -1533,6 +1545,21 @@ static int menu_loop(void)
 		if (key_pressed(1) == 1) {
 			return 0;
 		}
+
+		if (main_info.headless) {
+			int hc, hn;
+
+			hn = main_info.headless_players;
+			if (hn < 1)
+				hn = 1;
+			if (hn > JNB_MAX_PLAYERS)
+				hn = JNB_MAX_PLAYERS;
+			for (hc = 0; hc < hn; hc++) {
+				player[hc].enabled = 1;
+				ai[hc] = (main_info.headless_ai_mask >> hc) & 1;
+			}
+		}
+
 		if (init_level(0, pal) != 0) {
 			deinit_level();
 			deinit_program();
@@ -1577,12 +1604,6 @@ static int menu_loop(void)
 		main_info.page_info[1].num_pobs = 0;
 		main_info.view_page = 0;
 		main_info.draw_page = 1;
-
-		if (main_info.headless) {
-			/* headless skips menu()'s walk-in sequence, so enable player 1 directly */
-			ai[0] = 0;
-			player[0].enabled = 1;
-		}
 
 		game_loop();
 
@@ -3106,6 +3127,7 @@ int init_program(int argc, char *argv[], char *pal)
 	memset(&main_info, 0, sizeof(main_info));
 
 	strcpy(datfile_name, DATA_PATH);
+	main_info.headless_players = 1;
 
 	force2 = force3 = 0;
 
@@ -3179,6 +3201,14 @@ int init_program(int argc, char *argv[], char *pal)
 				if (c1 < (argc - 1))
 					main_info.headless_input_path = argv[c1 + 1];
 			}
+			else if (stricmp(argv[c1], "-headless-players") == 0) {
+				if (c1 < (argc - 1))
+					main_info.headless_players = atoi(argv[c1 + 1]);
+			}
+			else if (stricmp(argv[c1], "-headless-ai") == 0) {
+				if (c1 < (argc - 1))
+					main_info.headless_ai_mask = (unsigned int)strtoul(argv[c1 + 1], NULL, 0);
+			}
 			else if (stricmp(argv[c1],"-v") == 0) {
 				printf("jumpnbump %s compiled %s at %s with",JNB_VERSION,__DATE__,__TIME__);
 #ifndef USE_NET
@@ -3209,6 +3239,8 @@ int init_program(int argc, char *argv[], char *pal)
 				printf("  -headless                run without video/audio, driven by -seed/-input\n");
 				printf("  -seed n                  RNG seed for -headless (deterministic replay)\n");
 				printf("  -input trace.jsonl       scripted per-frame input for -headless\n");
+				printf("  -headless-players n      number of players to enable in -headless (1-4, default 1)\n");
+				printf("  -headless-ai mask        bitmask of which -headless-players are CPU-controlled\n");
 				printf("\n");
 				return 1;
 			}
