@@ -16,6 +16,31 @@ pub fn build(b: *std.Build) void {
     addDiffTestStep(b, target, optimize);
     const abi_lib = addAbiStep(b, target, optimize);
     addAbiTestStep(b, target, optimize, abi_lib);
+    addCliTools(b, target, optimize);
+}
+
+// TASK-010.05: Zig CLI rewrites of modify/jnbpack.c, modify/jnbunpack.c, and
+// modify/gobpack.c, built on the dat/gob/pcx codecs above. Not part of the
+// pure simulation core (they do real file I/O against argv), so each gets
+// its own `zig build <name>` install step rather than joining `test`.
+const cli_tools = [_]struct { name: []const u8, file: []const u8 }{
+    .{ .name = "jnbpack", .file = "jnbpack_cli.zig" },
+    .{ .name = "jnbunpack", .file = "jnbunpack_cli.zig" },
+    .{ .name = "gobpack", .file = "gobpack_cli.zig" },
+};
+
+fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
+    inline for (cli_tools) |tool| {
+        const mod = b.createModule(.{
+            .root_source_file = b.path(tool.file),
+            .target = target,
+            .optimize = optimize,
+        });
+        const exe = b.addExecutable(.{ .name = tool.name, .root_module = mod });
+        const install = b.addInstallArtifact(exe, .{});
+        const step = b.step(tool.name, "Build the Zig " ++ tool.name ++ " CLI");
+        step.dependOn(&install.step);
+    }
 }
 
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).

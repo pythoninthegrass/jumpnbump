@@ -4,7 +4,7 @@ title: Port 8-bit PCX reader/writer to Zig
 status: Done
 assignee: []
 created_date: '2026-09-15 19:14'
-updated_date: '2026-09-16 16:06'
+updated_date: '2026-09-16 16:12'
 labels: []
 milestone: m-2
 dependencies: []
@@ -24,8 +24,14 @@ Port 8-bit paletted PCX decoding (and the encoding used by gobpack) to Zig, cove
 <!-- AC:BEGIN -->
 - [x] #1 The Zig decoder produces identical pixel data and 768-byte palette to read_pcx for every PCX file in data/
 - [x] #2 A round-trip encode/decode of a PCX produces pixel-identical output
-- [ ] #3 gobpack's duplicated PCX code is noted as a future dedup target once the Zig CLI replacement lands
+- [x] #3 gobpack's duplicated PCX code is noted as a future dedup target once the Zig CLI replacement lands
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+AC#3 closed out by TASK-010.05: gobpack was rebuilt in Zig against this shared core/pcx.zig codec, replacing its private duplicated read_pcx/write_pcx.
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
