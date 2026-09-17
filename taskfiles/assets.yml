@@ -27,8 +27,44 @@ tasks:
     cmds:
       - uv run tools/build_level_layers.py --all --check
 
+  sfx:render:
+    desc: "Convert death/fly/jump/splash/spring.smp into WAV (TASK-013.03)"
+    cmds:
+      - uv run tools/render_sfx.py --all
+
+  sfx:check:
+    desc: "Verify the committed SFX WAVs match a fresh render byte-for-byte"
+    cmds:
+      - uv run tools/render_sfx.py --all --check
+
+  music:render:
+    desc: "Render bump/jump/scores.mod into looping OGG via pinned openmpt123 (TASK-013.03)"
+    cmds:
+      - uv run tools/render_music.py --all
+
+  music:check:
+    desc: >
+      Verify the committed music OGGs decode to the same samples as a fresh
+      render. Requires the exact openmpt123 version pinned in
+      tools/game_toolchain.lock (its renderer -- and libvorbis's encoder --
+      are not guaranteed bit-identical across versions or platforms/CPU
+      codepaths); not wired into .github/workflows/ci.yml yet because no
+      Ubuntu apt/EPEL pocket currently ships that exact version on every CI
+      runner, so this stays a local/self-hosted-runner gate until a
+      version-pinned build step is added for CI specifically. Run manually
+      after installing the pinned openmpt123.
+    cmds:
+      - uv run tools/render_music.py --all --check
+
+  audio:check:
+    desc: "Both audio reproducibility gates (TASK-013 AC#3's `task audio:check`); music:check needs the pinned openmpt123 installed locally first"
+    cmds:
+      - task: sfx:check
+      - task: music:check
+
   check:
     desc: "All asset-pipeline reproducibility gates that are portable across CI platforms"
     cmds:
       - task: sprites:check
       - task: levels:check
+      - task: sfx:check

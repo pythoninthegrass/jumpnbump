@@ -40,5 +40,10 @@ jobs:
 
       - uses: go-task/setup-task@v1
 
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
       - name: Build and test
         run: task ci:linux-check

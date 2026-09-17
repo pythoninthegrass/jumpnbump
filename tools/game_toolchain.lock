@@ -1,0 +1,14 @@
+# Single source of truth for what mise cannot express in the game toolchain.
+# Parsed by tools/render_music.py. Environment variables of the same name
+# override any entry.
+
+# openmpt123 (TASK-013.03): renders bump.mod/jump.mod/scores.mod to WAV,
+# which tools/render_music.py then encodes to OGG. Unlike Furnace
+# (tools/render_music.py in ~/git/neo_snake), upstream libopenmpt does not
+# publish a portable static Linux binary at https://lib.openmpt.org/files/
+# libopenmpt/bin/ -- only Windows/DOS archives -- so there is no
+# checksum-verified download to pin here. openmpt123 is expected to already
+# be on PATH (e.g. `dnf install openmpt123` / `apt install openmpt123` from
+# the distro's package, EPEL on RHEL-likes); this pin is a version check
+# against `openmpt123 --short-version`, not a fetch target.
+OPENMPT123_VERSION="0.8.7"
