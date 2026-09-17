@@ -293,7 +293,6 @@ pub export fn steer_players() void {
         if (p.enabled != 1) continue;
 
         if (p.dead_flag == 0) {
-
             if (p.action_left != 0 and p.action_right != 0) {
                 if (p.direction == 0) {
                     if (p.action_right != 0) playerActionRight(p);
@@ -486,7 +485,6 @@ pub export fn steer_players() void {
                         const splash_y = fixed16.add(fixed16.shr16(p.y) & 0xfff0, 15);
                         add_object(obj_splash, splash_x, splash_y, 0, 0, obj_anim_splash, 0);
                         if (blood_is_thicker_than_water == 0) {
-
                             sfxAt(sfx_splash, sfx_splash_freq, 1000);
                         } else {
                             sfxAt(sfx_splash, sfx_splash_freq, 5000);
@@ -665,28 +663,13 @@ inline fn cAbs(v: c_int) u31 {
 }
 
 /// add_object (main.c:2408) — the first-free-slot allocator steer_players()
-/// reaches through for splash/smoke spawns. Owned here for now (TASK-011.04
-/// grows the particles port from it); exported under the C name so other
-/// modules reach it via extern fn instead of @import.
-pub export fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: c_int, anim: c_int, frame: c_int) void {
-    for (&objects) |*o| {
-        if (o.used == 0) {
-            o.used = 1;
-            o.type = type_;
-            o.x = fixed16.shl16(x);
-            o.y = fixed16.shl16(y);
-            o.x_add = x_add;
-            o.y_add = y_add;
-            o.x_acc = 0;
-            o.y_acc = 0;
-            o.anim = anim;
-            o.frame = frame;
-            o.ticks = objectAnimRow(anim)[@as(u32, @bitCast(frame))].ticks;
-            o.image = objectAnimRow(anim)[@as(u32, @bitCast(frame))].image;
-            return;
-        }
-    }
-}
+/// reaches through for splash/smoke spawns. TASK-011.04 moved its canonical
+/// home to core/objects.zig (the particles own the allocator); this module
+/// reaches it through the playbook's cross-module extern-fn pattern, exactly
+/// like rnd(), so there is one definition. The difftest/abi/game-loop builds
+/// resolve it against objects.zig's export; the standalone steer.zig unit-test
+/// compilation links the same export (see core/build.zig's addTestStep).
+extern fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: c_int, anim: c_int, frame: c_int) void;
 
 inline fn objectAnimRow(anim: c_int) *const [10]AnimFrame {
     const rows = @as([*]const ObjectAnim, @ptrCast(&object_anims));
@@ -737,8 +720,12 @@ pub fn sfxReset() void {
     sfx_n_c = 0;
     sfx_n_z = 0;
 }
-pub fn sfxCountC() usize { return sfx_n_c; }
-pub fn sfxCountZ() usize { return sfx_n_z; }
+pub fn sfxCountC() usize {
+    return sfx_n_c;
+}
+pub fn sfxCountZ() usize {
+    return sfx_n_z;
+}
 fn sfxDrop(id: c_int, freq: c_ushort) void {
     if (sfx_n_z < sfx_trace_z.len) sfx_trace_z[sfx_n_z] = id * 100000 + @as(c_int, freq);
     sfx_n_z += 1;

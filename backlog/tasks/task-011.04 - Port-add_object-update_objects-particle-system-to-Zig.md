@@ -1,7 +1,7 @@
 ---
 id: TASK-011.04
 title: Port add_object / update_objects particle system to Zig
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:15'
 labels: []
@@ -21,6 +21,6 @@ Port main.c's add_object and update_objects (~lines 2284-2643), covering all 8 p
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 zig build difftest passes against the Phase 1 corpus for all traces exercising every one of the 8 OBJ_* particle types, with zero checksum mismatches
-- [ ] #2 The 200-slot objects[] array's reuse/allocation behavior matches the C original exactly
+- [x] #1 zig build difftest passes against the Phase 1 corpus for all traces exercising every one of the 8 OBJ_* particle types, with zero checksum mismatches
+- [x] #2 The 200-slot objects[] array's reuse/allocation behavior matches the C original exactly
 <!-- AC:END -->
