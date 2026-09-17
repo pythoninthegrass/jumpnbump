@@ -17,7 +17,18 @@ tasks:
     cmds:
       - uv run tools/build_sprite_atlas.py --all --check
 
+  levels:render:
+    desc: "Render level/menu PCX pairs into background + masked-foreground PNGs (TASK-013.02)"
+    cmds:
+      - uv run tools/build_level_layers.py --all
+
+  levels:check:
+    desc: "Verify the committed level layers match a fresh render byte-for-byte"
+    cmds:
+      - uv run tools/build_level_layers.py --all --check
+
   check:
     desc: "All asset-pipeline reproducibility gates that are portable across CI platforms"
     cmds:
       - task: sprites:check
+      - task: levels:check

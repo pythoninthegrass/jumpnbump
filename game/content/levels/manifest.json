@@ -1,0 +1,16 @@
+{
+  "layers": [
+    {
+      "name": "level",
+      "background": "level_background.png",
+      "foreground": "level_foreground.png",
+      "note": "foreground must draw on top of sprites; alpha=0 where the source mask pcx is 0"
+    },
+    {
+      "name": "menu",
+      "background": "menu_background.png",
+      "foreground": "menu_foreground.png",
+      "note": "foreground must draw on top of sprites; alpha=0 where the source mask pcx is 0"
+    }
+  ]
+}
