@@ -76,8 +76,13 @@ typedef struct
  * harness) and read/written through the externs below — the Zig side and
  * the reference side then run over literally the same player[], ban_map
  * and keyb arrays, with the harness accessors as the only API in. */
-extern player_t player[JNB_MAX_PLAYERS];
-extern unsigned int ban_map[17][22];
+/* sim_harness.c's shared storage under the *_raw link names the rename
+ * leaves intact; the #defines below restore main.c's names for the
+ * extracted body. */
+extern player_t player_raw[JNB_MAX_PLAYERS];
+extern unsigned int ban_map_raw[17][22];
+#define player player_raw
+#define ban_map ban_map_raw
 extern int ai[JNB_MAX_PLAYERS];
 extern char keyb[256];
 #define keyb_ref keyb

@@ -52,21 +52,26 @@ const steer = @import("steer.zig");
 
 extern fn c_steer_players() void;
 extern fn c_position_player(player_num: c_int) void;
-extern fn c_cpu_move() void;
-extern fn c_update_player_actions() void;
 
 // ---------------------------------------------------------------------------
-// World storage: core/steer.zig's exported globals ARE the world (the
-// playbook's globals-ownership rule; the C reference binds its extern
-// declarations to the same C names through C linkage, so both sides of the
-// differential mutate one world). `players`/`objects` below are this
-// harness's private snapshot buffers — snapshot() copies the live world
-// into them, restore() writes it back — and the `p`/`o` aliases keep the
-// replay code below reading like the module's own names.
+// World storage.
+//
+// player[]/ban_map[] live in core/c_ref/sim_harness.c as player_raw[]/
+// ban_map_raw[] — one definition shared by core/steer.zig's extern mirrors
+// and the C reference's `#define player player_raw`, so both sides of the
+// differential mutate one world (objects[]/player_anims[]/object_anims[]
+// stay core/steer.zig's exports under their own names, which the rename
+// leaves alone). `players`/`objects` below are this harness's private
+// snapshot buffers — snapshot() copies the live world into them, restore()
+// writes it back.
 // ---------------------------------------------------------------------------
 
-var players: [world.max_players]world.Player = undefined;
-var objects: [world.num_objects]world.Object = undefined;
+extern var player_raw: [world.max_players]world.Player;
+extern var objects_raw: [world.num_objects]world.Object;
+extern var keyb: [256]i8;
+extern var ban_map_raw: [world.ban_rows][world.ban_cols]c_uint;
+const players_ptr: *[world.max_players]world.Player = @constCast(&player_raw);
+const ban_map_ptr: *[world.ban_rows][world.ban_cols]c_uint = @constCast(&ban_map_raw);
 
 /// is_server/is_net: one shared copy for steer.zig's `extern var
 /// is_server` and the C reference's same-named extern, pinned to the
@@ -105,8 +110,30 @@ const probe_default_ban_map = [world.ban_rows][world.ban_cols]u32{
 // cpu_move()/update_player_actions() prologue; TASK-011.05 and the input
 // layer own those, so the harness defines them away and the C tick starts
 // where the port's tick starts.
+// The extracted steer_players still carries its
+// cpu_move()/update_player_actions() prologue; TASK-011.05 and the input
+// layer own those, and core/steer.zig's port starts after them, so the C
+// side calls these harness definitions while the Zig tick below starts at
+// the body proper.
 export fn cpu_move() void {}
-export fn update_player_actions() void {}
+export fn update_player_actions() void {
+    // sdl/input.c:42's headless path: keyb[] through the (unsigned char)
+    // index key_pressed() uses (the C's JOY_* macros are false with no
+    // joysticks, and tellServerPlayerMoved is a no-op without is_net).
+    for (0..4) |i| {
+        const p = &players_ptr[i];
+        p.action_left = @intFromBool(keyb[@intCast(key_pl[i][0] & 0x7f)] == 1);
+        p.action_right = @intFromBool(keyb[@intCast(key_pl[i][1] & 0x7f)] == 1);
+        p.action_up = @intFromBool(keyb[@intCast(key_pl[i][2] & 0x7f)] == 1);
+    }
+}
+
+const key_pl = [4][3]c_int{
+    .{ 276, 275, 273 }, // p1 arrows (SDLK_LEFT/RIGHT/UP)
+    .{ 97, 100, 119 }, // p2 a, d, w
+    .{ 106, 108, 105 }, // p3 j, l, i
+    .{ 260, 262, 264 }, // p4 keypad 4, 6, 8
+};
 
 // The C reference's rnd() — same core/rnd.zig call the Zig port makes, so
 // both consume one libc stream.
@@ -203,7 +230,7 @@ fn loadObjectAnims() void {
 /// motion is update_objects() (TASK-011.04) and stays frozen here.
 fn seedLevelObjects() void {
     for (0..16) |r| for (0..22) |col| {
-        if (steer.ban_map[r][col] == steer.ban_spring) {
+        if (ban_map_raw[r][col] == steer.ban_spring) {
             steer.add_object(0, @intCast(col * 16), @intCast(r * 16), 0, 0, 0, 5);
         }
     };
@@ -212,7 +239,7 @@ fn seedLevelObjects() void {
         while (true) {
             const s1: c_int = @intCast(rnd_mod.rnd(22));
             const s2: c_int = @intCast(rnd_mod.rnd(16));
-            if (steer.ban_map[@intCast(s2)][@intCast(s1)] == steer.ban_void) {
+            if (ban_map_raw[@intCast(s2)][@intCast(s1)] == steer.ban_void) {
                 const vx: c_int = (s1 << 4) +% 8;
                 const vy: c_int = (s2 << 4) +% 8;
                 const va: c_int = @bitCast(@as(u32, @bitCast(@as(c_int, rnd_mod.rnd(65535)) -% 32768)) *% 2);
@@ -236,15 +263,15 @@ const Snapshot = struct {
 
 fn snapshot() Snapshot {
     return .{
-        .players = steer.player,
-        .objects = steer.objects,
+        .players = player_raw,
+        .objects = objects_raw,
         .rnd_calls = rnd_mod.rnd_call_count,
     };
 }
 
 fn restore(s: *const Snapshot) void {
-    steer.player = s.players;
-    steer.objects = s.objects;
+    player_raw = s.players;
+    objects_raw = s.objects;
     rnd_mod.rnd_call_count = s.rnd_calls;
 }
 
@@ -270,12 +297,12 @@ fn comparePlayer(name: []const u8, tick: usize, idx: usize, want: world.Player, 
 
 fn compareWorld(name: []const u8, tick: usize, want: *const Snapshot, mismatches: *usize) void {
     for (want.players, 0..) |wp, i| {
-        comparePlayer(name, tick, i, wp, steer.player[i], mismatches);
+        comparePlayer(name, tick, i, wp, player_raw[i], mismatches);
     }
     for (want.objects, 0..) |wo, i| {
         inline for (std.meta.fields(world.Object)) |f| {
             const wv: c_int = @field(wo, f.name);
-            const zv: c_int = @field(steer.objects[i], f.name);
+            const zv: c_int = @field(objects_raw[i], f.name);
             if (wv != zv) {
                 std.debug.print("{s} tick {d} objects[{d}].{s}: zig={d} != c={d}\n", .{ name, tick, i, f.name, zv, wv });
                 mismatches.* += 1;
@@ -293,27 +320,19 @@ fn compareWorld(name: []const u8, tick: usize, want: *const Snapshot, mismatches
 // ---------------------------------------------------------------------------
 
 fn applyKeys(keys: []const []const u8) void {
-    for (&steer.player) |*p| {
-        p.action_left = 0;
-        p.action_right = 0;
-        p.action_up = 0;
+    // headless_load_frame_keys() (sdl/interrpt.c:314): clear the twelve
+    // bunny keys, then set the ones this tick's trace line names. The C's
+    // own update_player_actions() (harness export above) turns keyb[] into
+    // player[].action_* on both sides.
+    for (key_pl) |pl| {
+        for (pl) |key| keyb[@intCast(key & 0x7f)] = 0;
     }
     for (keys) |key| {
         // "p{1..4}_{left,right,jump}" — the corpus key vocabulary.
-        // "p2_left" is 7 bytes; the old `< 8` bound silently dropped every
-        // key and made the replay a no-op for both sides.
-        if (key.len < 5 or key[0] != 'p') continue;
+        if (key.len < 8 or key[0] != 'p') continue;
         const slot: usize = key[1] - '1';
-        const rest = key[2..];
-        if (rest.len < 2 or rest[0] != '_') continue;
-        const p = &steer.player[slot];
-        if (std.mem.eql(u8, rest[1..], "left")) {
-            p.action_left = 1;
-        } else if (std.mem.eql(u8, rest[1..], "right")) {
-            p.action_right = 1;
-        } else if (std.mem.eql(u8, rest[1..], "jump")) {
-            p.action_up = 1;
-        }
+        const which: usize = if (std.mem.eql(u8, key[3..], "left")) 0 else if (std.mem.eql(u8, key[3..], "right")) 1 else if (std.mem.eql(u8, key[3..], "jump")) 2 else continue;
+        keyb[@intCast(key_pl[slot][which] & 0x7f)] = 1;
     }
 }
 
@@ -329,10 +348,10 @@ fn placePlayers(trace: *const Trace, seed: c_uint) void {
     // position_player implementations ever disagree, the very first
     // steer_players tick would fail with an unexplainable offset, so pin
     // the placement itself here as well.
-    const c_placed = steer.player;
-    steer.player = [_]world.Player{.{}} ** world.max_players;
+    const c_placed = player_raw;
+    player_raw = [_]world.Player{.{}} ** world.max_players;
     for (0..trace.players) |i| {
-        steer.player[i].enabled = 1;
+        player_raw[i].enabled = 1;
     }
     rnd_mod.seed(seed);
     for (0..trace.players) |i| {
@@ -340,22 +359,22 @@ fn placePlayers(trace: *const Trace, seed: c_uint) void {
     }
     var mismatches: usize = 0;
     for (0..trace.players) |i| {
-        comparePlayer(trace.name, 0, i, c_placed[i], steer.player[i], &mismatches);
+        comparePlayer(trace.name, 0, i, c_placed[i], player_raw[i], &mismatches);
     }
     std.debug.assert(mismatches == 0);
 
     // Restore the C placement as the canonical starting world (the two are
     // now known equal) and let the level objects ride on top of it.
-    steer.player = c_placed;
+    player_raw = c_placed;
 }
 
 fn replay(trace: *const Trace, seed: c_uint, mismatches: *usize) void {
     setupWorld();
-    // The trace's players only — steer.player carries over from the previous
+    // The trace's players only — player_raw carries over from the previous
     // trace otherwise, and a stale enabled player picks up scripted keys
     // aimed at another trace.
     for (0..world.max_players) |i| {
-        steer.player[i].enabled = if (i < trace.players) 1 else 0;
+        player_raw[i].enabled = if (i < trace.players) 1 else 0;
     }
     placePlayers(trace, seed);
     rnd_mod.seed(seed +% 1);
@@ -369,6 +388,11 @@ fn replay(trace: *const Trace, seed: c_uint, mismatches: *usize) void {
         rnd_mod.seed(tick_seed);
         applyKeys(keys);
         steer.sfxReset();
+        // The extracted reference runs its own cpu_move()/
+        // update_player_actions() prologue (both harness definitions
+        // above); the Zig steer_players is the body proper (the Zig port's
+        // contract: the prologue callers run first), so the Zig tick
+        // spells it there instead.
         c_steer_players();
         const c_sfx = steer.sfx_trace_c;
         const c_sfx_n = steer.sfxCountC();
@@ -378,6 +402,12 @@ fn replay(trace: *const Trace, seed: c_uint, mismatches: *usize) void {
         restore(&start);
         rnd_mod.seed(tick_seed);
         applyKeys(keys);
+        steer.sfxReset();
+        // steer.zig's port starts after the prologue the extracted C runs
+        // inside c_steer_players, so the Zig tick runs the same two harness
+        // definitions first.
+        cpu_move();
+        update_player_actions();
         steer.steer_players();
         // compare the sfx event streams (id+evaluated-freq) the two sides emitted
         if (steer.sfxCountZ() != c_sfx_n) {
@@ -396,9 +426,9 @@ fn replay(trace: *const Trace, seed: c_uint, mismatches: *usize) void {
 }
 
 fn setupWorld() void {
-    steer.player = std.mem.zeroes([world.max_players]world.Player);
-    steer.objects = std.mem.zeroes([world.num_objects]world.Object);
-    steer.ban_map = default_ban_map;
+    player_raw = std.mem.zeroes([world.max_players]world.Player);
+    objects_raw = std.mem.zeroes([world.num_objects]world.Object);
+    ban_map_raw = default_ban_map;
     steer.pogostick = 0;
     steer.bunnies_in_space = 0;
     steer.jetpack = 0;

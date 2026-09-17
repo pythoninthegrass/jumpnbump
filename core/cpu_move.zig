@@ -54,7 +54,7 @@ pub const Player = extern struct {
 
 /// ban_map (main.c:74) — [row][col] unsigned tile grid. extern-only: the
 /// module that owns level state defines the array.
-pub extern var ban_map: [17][22]c_uint;
+pub extern var ban_map_raw: [17][22]c_uint;
 
 /// ai[] (main.c:68) — per-player CPU flag, set from the headless AI mask
 /// (or the menu, once that path is ported). Declared extern per
@@ -62,8 +62,8 @@ pub extern var ban_map: [17][22]c_uint;
 /// it, mirroring how rnd.zig owns rnd_call_count.
 pub export var ai: [max_players]c_int = [_]c_int{0} ** max_players;
 
-/// player[] (main.c:54) — extern-only; see the file header.
-pub extern var player: [max_players]Player;
+/// player_raw[] (main.c:54) — extern-only; see the file header.
+pub extern var player_raw: [max_players]Player;
 
 /// keyb[] (sdl/interrpt.c:42) — the keyboard state cpu_move writes via
 /// addkey() and reads via key_pressed(). extern-only; the harness (or,
@@ -110,7 +110,7 @@ fn keyPressed(key: c_int) c_int {
 /// map_tile (main.c:1852): the tile at a pixel coordinate, BAN_VOID
 /// outside the grid. The C's own bounds mixup — `pos_x < 17 || pos_y < 22`
 /// tested against a 22-column, 17-row grid — is reproduced verbatim, and
-/// the index is the C's `ban_map[pos_y][pos_x]` with y selecting the row.
+/// the index is the C's `ban_map_raw[pos_y][pos_x]` with y selecting the row.
 pub fn mapTile(pos_x: c_int, pos_y: c_int) c_int {
     // >> 4 on a signed int floors toward negative infinity; Zig's signed
     // >> matches, and fixed16.sar pins the same behavior for review.
@@ -130,7 +130,7 @@ pub fn mapTile(pos_x: c_int, pos_y: c_int) c_int {
     // bounds-checked array, so it reads on into whatever memory follows
     // ban_map exactly like the C reference does, rather than panicking.
     const flat = y *% 22 +% x;
-    const cells: [*]const c_uint = @ptrCast(&ban_map);
+    const cells: [*]const c_uint = @ptrCast(&ban_map_raw);
     const idx: u32 = @bitCast(flat);
     return @bitCast(cells[idx]);
 }
@@ -139,7 +139,7 @@ pub fn mapTile(pos_x: c_int, pos_y: c_int) c_int {
 /// Returns false when the C `continue`s past the player: not an AI bunny,
 /// not enabled, or no target found.
 fn movePlayer(i: usize) bool {
-    if (ai[i] == 0 or player[i].enabled == 0) {
+    if (ai[i] == 0 or player_raw[i].enabled == 0) {
         return false;
     }
 
@@ -154,11 +154,11 @@ fn movePlayer(i: usize) bool {
     var nearest_distance: c_int = -1;
     var j: usize = 0;
     while (j < max_players) : (j += 1) {
-        if (i == j or player[j].enabled == 0) {
+        if (i == j or player_raw[j].enabled == 0) {
             continue;
         }
-        const deltax = player[j].x -% player[i].x;
-        const deltay = player[j].y -% player[i].y;
+        const deltax = player_raw[j].x -% player_raw[i].x;
+        const deltay = player_raw[j].y -% player_raw[i].y;
         const players_distance = deltax *% deltax +% deltay *% deltay;
 
         const closer = players_distance < nearest_distance or nearest_distance == -1;
@@ -170,10 +170,10 @@ fn movePlayer(i: usize) bool {
 
     const t = target orelse return false;
 
-    const cur_posx = player[i].x >> 16;
-    const cur_posy = player[i].y >> 16;
-    const tar_posx = player[t].x >> 16;
-    const tar_posy = player[t].y >> 16;
+    const cur_posx = player_raw[i].x >> 16;
+    const cur_posy = player_raw[i].y >> 16;
+    const tar_posx = player_raw[t].x >> 16;
+    const tar_posy = player_raw[t].y >> 16;
 
     var lm: c_int = 0;
     var rm: c_int = 0;
