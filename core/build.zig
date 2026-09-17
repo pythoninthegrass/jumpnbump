@@ -46,7 +46,7 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig", "collision.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
@@ -89,11 +89,38 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
             });
             mod.addObjectFile(rnd_obj.getEmittedBin());
         }
+        // TASK-011.03: collision.zig's extern mirrors (player_raw/
+        // ban_map_raw) get the same shared-storage C definitions the Tier-B
+        // link uses, so its Tier-A tests exercise the real layout; the
+        // weak in-module fallbacks only apply when the module is its own
+        // test root. add_object lands on steer.zig's object (the port
+        // collision.zig reaches through extern fn), which drags steer.zig's
+        // own externs onto the same resolution list.
+        if (std.mem.eql(u8, file, "collision.zig")) {
+            const harness_mod = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            harness_mod.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            const harness_obj = b.addObject(.{ .name = "collision_unit_harness", .root_module = harness_mod });
+            mod.addObjectFile(harness_obj.getEmittedBin());
+            const steer_obj = b.addObject(.{
+                .name = "collision_unit_steer",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("steer.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod.addObjectFile(steer_obj.getEmittedBin());
+        }
         // TASK-011.02: steer.zig (and every future port that reaches
         // another subsystem's C-named global through the playbook's extern
         // pattern — extern fn rnd, extern var is_server) needs those names
         // resolvable when its module is built standalone.
-        if (std.mem.eql(u8, file, "steer.zig")) {
+        if (std.mem.eql(u8, file, "steer.zig") or std.mem.eql(u8, file, "collision.zig")) {
             mod.addObjectFile(rnd_native.getEmittedBin());
             // The Zig TU exporting is_server/is_net for standalone module
             // builds (see core/unit_net_globals.zig's header comment): compiled
@@ -176,7 +203,7 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // first per-tick stateful replay: the C reference is extracted verbatim from
 // main.c by core/c_ref/extract_steered.py into core/c_ref/steer.c. Corpus-
 // replay entries join as later TASK-011.* ports land.
-const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig", "objects_difftest.zig" };
+const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig", "objects_difftest.zig", "collision_difftest.zig" };
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
@@ -241,6 +268,19 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
         "add_object",
         "update_objects",
     }, .off);
+    // TASK-011.03: collision.c is generated from main.c too (see that
+    // script's docstring); process_kill_packet is exported to the harness's
+    // kill_dispatch, while player_kill/collision_check are collision.zig's
+    // own names (player_kill file-static there, exported here for the
+    // targeted probes).
+    // The rename list keeps the extracted definitions distinct from the
+    // Zig port's own exports; the file-static pair and the packet entry are
+    // reachable through the wrappers at the bottom of collision.c
+    // (collision_tick / player_kill_gate / kill_packet_entry), which the
+    // rename leaves untouched.
+    const collision_ref = compileRenamedCRef(b, target, optimize, "collision_c_ref", "c_ref/collision.c", &.{
+        "processKillPacket",
+    });
 
     for (diff_test_files) |file| {
         const mod = b.createModule(.{
@@ -256,6 +296,7 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             mod_test.root_module.addObjectFile(fixed16_ref);
         }
         if (std.mem.eql(u8, file, "cpu_move_difftest.zig")) {
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
             mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/cpu_move_harness.c"), .flags = &.{"-fwrapv"} });
             mod_test.root_module.addObjectFile(cpu_move_ref);
         }
@@ -264,6 +305,7 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             mod_test.root_module.addObjectFile(flies_ref);
         }
         if (std.mem.eql(u8, file, "steer_difftest.zig")) {
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(steer_ref);
             // TASK-011.04: add_object()/update_objects() now live in
@@ -284,6 +326,13 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             mod_test.root_module.addObjectFile(steer_draw_obj.getEmittedBin());
         }
         if (std.mem.eql(u8, file, "objects_difftest.zig")) {
+            // TASK-011.03's world-storage consolidation made steer.zig's
+            // player_raw/objects_raw/ban_map_raw `extern var` (no longer
+            // `export var`), so @importing steer.zig no longer supplies real
+            // storage for objects_raw/ban_map_raw the way it used to; this
+            // binary needs sim_harness.c's definitions directly, same as
+            // steer_difftest.zig/cpu_move_difftest.zig/collision_difftest.zig.
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
             // The C reference's rnd() goes through c_rnd_from -> rnd_mod.rnd
             // (the harness's export), and objects.zig reaches rnd as an extern
             // fn; both bind rnd.zig's export, so link it like the difftests
@@ -291,6 +340,29 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             // intact in the reference for the octant comparison.
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(objects_ref);
+        }
+        if (std.mem.eql(u8, file, "collision_difftest.zig")) {
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            mod_test.root_module.addObjectFile(rnd_ref);
+            mod_test.root_module.addObjectFile(collision_ref);
+            // The replayed tick runs the extracted steer_players (the pair
+            // only overlaps because physics moved them there), so TASK-
+            // 011.02's reference is linked into this binary as well.
+            mod_test.root_module.addObjectFile(steer_ref);
+            // collision.zig's kill/gore path (furGore) reaches add_object,
+            // which @imports objects.zig into this binary too, so its
+            // extern add_pob/add_leftovers (never defined in core) need the
+            // same no-op draw stubs steer_difftest.zig links.
+            const collision_draw_obj = b.addObject(.{
+                .name = "collision_dt_objects_draw",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("unit_objects_draw.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod_test.root_module.addObjectFile(collision_draw_obj.getEmittedBin());
         }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }

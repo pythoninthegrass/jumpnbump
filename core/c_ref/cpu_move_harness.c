@@ -43,12 +43,19 @@ typedef struct
 	int image;
 } player_t;
 
-player_t player[JNB_MAX_PLAYERS];
-unsigned int ban_map[17][22];
 /* ai[] is core/cpu_move.zig's `pub export var ai` -- that's the one
- * definition; this side only references it. */
+ * definition; this side only references it. player[]/ban_map[]/keyb[] are
+ * sim_harness.c's shared storage (the *_raw aliases core/cpu_move.zig's
+ * extern mirrors bind to); this TU only declares them for addkey(). */
 extern int ai[JNB_MAX_PLAYERS];
-char keyb[256];
+
+/* sim_harness.c's storage, declared under the names this file's helpers
+ * use. */
+extern player_t player_raw[JNB_MAX_PLAYERS];
+extern unsigned int ban_map_raw[17][22];
+extern char keyb[256];
+#define player player_raw
+#define ban_map ban_map_raw
 
 int addkey(unsigned int key)
 {

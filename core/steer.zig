@@ -81,25 +81,29 @@ pub const AnimFrame = extern struct {
 };
 
 // ---------------------------------------------------------------------------
-// World storage. player[]/objects[]/ban_map in core/world.zig's canonical
-// layout (the playbook's globals-ownership rule: steer.zig is where they
-// live on the Zig side), owned here as exported globals. The Tier-B
-// harness @import()s this module and reads/writes these same variables,
-// and core/c_ref/steer.c binds its extern declarations to them through
-// the C linkage names — one world for both sides of the differential
-// (the harness's own arena was the first draft and produced exactly the
-// vacuity trap the coverage probe below catches: two storages, each side
-// mutating its own copy). The game-loop layer will fill the same storage
-// from init_level().'
+// World storage. player[]/objects[]/ban_map use core/world.zig's
+// canonical layout, but their *definition* lives in the one shared C
+// harness the differential binaries link (core/c_ref/sim_harness.c): this
+// module reaches them through extern mirrors named *_raw, and the
+// extracted C references' `#define player player_raw` (and friends) bind
+// to that very same memory. One world, exactly one definition per link --
+// two storages is precisely the vacuity trap the coverage probe below
+// catches. The weak exports further down back the mirrors when steer.zig
+// is its own test root (standalone `zig build test`); a difftest or the
+// game-loop link supplies the real storage instead and the weak symbols
+// lose. The game-loop layer will fill the same storage from init_level().
 //
-// The default values mirror a cold-start main.c: zeroed player[]/objects[]
-// and the built-in grid of main.c:74 (what read_level()/levelmap.txt
-// overwrite once the level-loading port owns it).
+// The defaults mirror a cold-start main.c: zeroed player[]/objects[] and
+// the built-in grid of main.c:74 (what read_level()/levelmap.txt overwrite
+// once the level-loading port owns it).
 // ---------------------------------------------------------------------------
 
-pub export var player: [max_players]Player = [_]Player{.{}} ** max_players;
-pub export var objects: [num_objects]Object = [_]Object{.{}} ** num_objects;
-pub export var ban_map: [world.ban_rows][world.ban_cols]u32 = default_ban_map;
+extern var player_raw: [max_players]Player;
+extern var objects_raw: [num_objects]Object;
+extern var ban_map_raw: [world.ban_rows][world.ban_cols]u32;
+const player_ptr: *[max_players]Player = @constCast(&player_raw);
+const objects_ptr: *[num_objects]Object = @constCast(&objects_raw);
+const ban_map_ptr: *[world.ban_rows][world.ban_cols]u32 = @constCast(&ban_map_raw);
 
 /// The anim tables (player_anim_t from globals.pre:218 / main.c's
 /// object_anims). Owned and exported here — like the mode flags below and
@@ -108,6 +112,20 @@ pub export var ban_map: [world.ban_rows][world.ban_cols]u32 = default_ban_map;
 /// reference binds same-named externs to these exports at link time.)
 pub export var player_anims: [7]PlayerAnim = [_]PlayerAnim{.{}} ** 7;
 pub export var object_anims: [8]ObjectAnim = [_]ObjectAnim{.{}} ** 8;
+
+// Weak fallback definitions for the extern world mirrors, used when this
+// module is its own test root (standalone `zig build test`); a difftest or
+// game-loop link supplies the shared harness storage instead, and the
+// linker resolves each extern to exactly one definition.
+var unit_player: [max_players]Player = [_]Player{.{}} ** max_players;
+var unit_objects: [num_objects]Object = [_]Object{.{}} ** num_objects;
+var unit_ban_map: [world.ban_rows][world.ban_cols]u32 = default_ban_map;
+
+comptime {
+    @export(&unit_player, .{ .name = "player_raw", .linkage = .weak });
+    @export(&unit_objects, .{ .name = "objects_raw", .linkage = .weak });
+    @export(&unit_ban_map, .{ .name = "ban_map_raw", .linkage = .weak });
+}
 
 /// pogostick/bunnies_in_space/jetpack/blood_is_thicker_than_water
 /// (main.c:240) — keyboard-cheat mode flags steer_players() reads. Owned
@@ -150,7 +168,7 @@ const default_ban_map = [world.ban_rows][world.ban_cols]u32{
 inline fn banTile(x: Fixed, y: Fixed) u32 {
     const row: usize = @as(u32, @bitCast(y >> 4));
     const col: usize = @as(u32, @bitCast(x >> 4));
-    const flat = @as([*]const u32, @ptrCast(&ban_map));
+    const flat = @as([*]const u32, @ptrCast(ban_map_ptr));
     return flat[row * world.ban_cols + col];
 }
 
@@ -289,7 +307,8 @@ pub export fn steer_players() void {
     var s1: Fixed = 0;
     var s2: Fixed = 0;
 
-    for (&player, 0..) |*p, c1| {
+
+    for (player_ptr, 0..) |*p, c1| {
         if (p.enabled != 1) continue;
 
         if (p.dead_flag == 0) {
@@ -565,7 +584,7 @@ pub export fn steer_players() void {
 /// middle foot probe first, then either outer probe. The C compares the
 /// object's 16-px tile (x >> 20) against the pixel probe's tile (s >> 4).
 fn springAnimation(s1: Fixed, s2: Fixed) void {
-    for (&objects) |*o| {
+    for (objects_ptr) |*o| {
         if (o.used == 1 and o.type == obj_spring) {
             if (banTile(s1 + 8, s2 + 15) == ban_spring) {
                 if (fixed16.shr20(o.x) == (s1 + 8) >> 4 and fixed16.shr20(o.y) == (s2 + 15) >> 4) {
@@ -612,15 +631,15 @@ pub export fn position_player(player_num: c_int) void {
         }
         var c1: usize = 0;
         while (c1 < max_players) : (c1 += 1) {
-            if (c1 != pn and player[c1].enabled == 1) {
+            if (c1 != pn and player_ptr[c1].enabled == 1) {
                 // abs() over the C's int differences: wrapping subtract,
                 // magnitude taken without @abs's INT_MIN trap.
-                if (cAbs((s1 << 4) -% fixed16.shr16(player[c1].x)) < 32 and
-                    cAbs((s2 << 4) -% fixed16.shr16(player[c1].y)) < 32) break;
+                if (cAbs((s1 << 4) -% fixed16.shr16(player_ptr[c1].x)) < 32 and
+                    cAbs((s2 << 4) -% fixed16.shr16(player_ptr[c1].y)) < 32) break;
             }
         }
         if (c1 == max_players) {
-            const p = &player[pn];
+            const p = &player_ptr[pn];
             // (long) s << 20 truncated back into the int field: a wrapping
             // 32-bit shift, like fixed16's shl helpers.
             p.x = @bitCast(@as(u32, @bitCast(s1)) << 20);
@@ -671,6 +690,18 @@ inline fn cAbs(v: c_int) u31 {
 /// compilation links the same export (see core/build.zig's addTestStep).
 extern fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: c_int, anim: c_int, frame: c_int) void;
 
+/// Raw pointer into object_anims (main.c indexes the rows directly). The
+/// gore frames (44..79) deliberately run past the 10-frame rows: main.c
+/// reads the same out-of-row memory (the 40 ints past an OBJ_FUR frame land
+/// in the next rows of the same table), and the harness pads the table the
+/// same way, so identical inputs give identical reads.
+inline fn objectAnimFrame(anim: c_int, frame: c_int) *const AnimFrame {
+    const flat = @as([*]const AnimFrame, @ptrCast(&object_anims));
+    const stride: u32 = @divExact(@sizeOf(ObjectAnim), @sizeOf(AnimFrame));
+    const idx: u64 = @as(u64, @as(u32, @bitCast(anim)) *% stride +% @as(u32, @bitCast(frame)));
+    return &flat[idx];
+}
+
 inline fn objectAnimRow(anim: c_int) *const [10]AnimFrame {
     const rows = @as([*]const ObjectAnim, @ptrCast(&object_anims));
     return &rows[@as(u32, @bitCast(anim))].frame;
@@ -708,8 +739,9 @@ inline fn sfxAt(id: c_int, freq_base: c_int, cut: c_int) void {
 // harness's dj_play_sfx export, the Zig side via sfxDrop) so the differential
 // compares the *evaluated* frequency arguments, not just the rnd() draws
 // that feed them. id*100000+freq keeps the pair in one slot.
-pub var sfx_trace_c: [64]c_int = .{0} ** 64;
-pub var sfx_trace_z: [64]c_int = .{0} ** 64;
+pub const sfx_trace_len = 512;
+pub var sfx_trace_c: [sfx_trace_len]c_int = .{0} ** sfx_trace_len;
+pub var sfx_trace_z: [sfx_trace_len]c_int = .{0} ** sfx_trace_len;
 var sfx_n_c: usize = 0;
 var sfx_n_z: usize = 0;
 pub fn sfxRecordC(id: c_int, freq: c_int) void {
@@ -731,8 +763,18 @@ fn sfxDrop(id: c_int, freq: c_ushort) void {
     sfx_n_z += 1;
 }
 
+/// Cross-module entry points for other ported modules' dj_play_sfx drops
+/// (core/collision.zig's kill sfx): the same trace, reached without an
+/// @import between ported modules (playbook rule).
+pub export fn sfxRecordZ(id: c_int, freq: c_int) void {
+    sfxDrop(id, @truncate(@as(c_uint, @bitCast(freq))));
+}
+pub export fn sfxResetZ() void {
+    sfxReset();
+}
+
 inline fn banMapCell(row: c_int, col: c_int) u32 {
-    const flat = @as([*]const u32, @ptrCast(&ban_map));
+    const flat = @as([*]const u32, @ptrCast(ban_map_ptr));
     const idx: i64 = @as(i64, @as(i32, @bitCast(row))) * @as(i64, world.ban_cols) +% @as(i64, @as(i32, @bitCast(col)));
     return flat[@as(u64, @bitCast(idx))];
 }
@@ -746,33 +788,33 @@ inline fn banMapCell(row: c_int, col: c_int) u32 {
 // ---------------------------------------------------------------------------
 
 test "world storage mirrors the canonical layout and cold-start state" {
-    try std.testing.expectEqual(@as(usize, 4), player.len);
-    try std.testing.expectEqual(@as(usize, 200), objects.len);
-    try std.testing.expectEqual(@as(u32, 1), ban_map[16][0]); // force-filled floor
-    try std.testing.expectEqual(@as(u32, 2), ban_map[14][0]); // water row
-    try std.testing.expectEqual(@as(u32, 3), ban_map[9][12]); // ice tile
+    try std.testing.expectEqual(@as(usize, 4), player_ptr.len);
+    try std.testing.expectEqual(@as(usize, 200), objects_ptr.len);
+    try std.testing.expectEqual(@as(u32, 1), ban_map_ptr[16][0]); // force-filled floor
+    try std.testing.expectEqual(@as(u32, 2), ban_map_ptr[14][0]); // water row
+    try std.testing.expectEqual(@as(u32, 3), ban_map_ptr[9][12]); // ice tile
 }
 
 test "position_player lands on a void tile with ground beneath" {
     player_anims = @import("std").mem.zeroes([7]PlayerAnim);
     player_anims[0] = .{ .num_frames = 1, .restart_frame = 0, .frame = .{ .{ .image = 0, .ticks = 0x7fff }, .{}, .{}, .{} } };
-    for (&player) |*p| p.* = .{};
-    player[0].enabled = 1;
+    for (player_ptr) |*p| p.* = .{};
+    player_ptr[0].enabled = 1;
 
     position_player(0);
-    const px: usize = @intCast(@as(i32, @bitCast(player[0].x)) >> 20);
-    const py: usize = @intCast(@as(i32, @bitCast(player[0].y)) >> 20);
-    try std.testing.expectEqual(@as(u32, ban_void), ban_map[py][px]);
-    try std.testing.expect(ban_map[py + 1][px] == ban_solid or ban_map[py + 1][px] == ban_ice);
-    try std.testing.expectEqual(@as(c_int, 0), player[0].x_add);
-    try std.testing.expectEqual(@as(c_int, 1), player[0].jump_ready);
+    const px: usize = @intCast(@as(i32, @bitCast(player_ptr[0].x)) >> 20);
+    const py: usize = @intCast(@as(i32, @bitCast(player_ptr[0].y)) >> 20);
+    try std.testing.expectEqual(@as(u32, ban_void), ban_map_ptr[py][px]);
+    try std.testing.expect(ban_map_ptr[py + 1][px] == ban_solid or ban_map_ptr[py + 1][px] == ban_ice);
+    try std.testing.expectEqual(@as(c_int, 0), player_ptr[0].x_add);
+    try std.testing.expectEqual(@as(c_int, 1), player_ptr[0].jump_ready);
 }
 
 test "steer_players leaves a disabled player untouched" {
-    for (&player) |*p| p.* = .{};
-    player[0].enabled = 0;
-    player[0].x = 12345;
+    for (player_ptr) |*p| p.* = .{};
+    player_ptr[0].enabled = 0;
+    player_ptr[0].x = 12345;
 
     steer_players();
-    try std.testing.expectEqual(@as(c_int, 12345), player[0].x);
+    try std.testing.expectEqual(@as(c_int, 12345), player_ptr[0].x);
 }

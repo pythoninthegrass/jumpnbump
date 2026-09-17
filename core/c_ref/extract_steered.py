@@ -49,6 +49,15 @@ PREAMBLE = """/*
  * sides draw from through c_rnd_from() (the rnd(max) macro below), and no-op
  * audio - so the only difference the differential can detect is the ported
  * logic itself.
+ *
+ * The player[]/ban_map[]/objects[] declarations carry a _raw suffix
+ * because compileRenamedCRef renames every token in this translation unit
+ * - the extern declarations included. The #define player player_raw /
+ * #define ban_map ban_map_raw / #define objects objects_raw below restore
+ * the names the extracted text uses, so the function bodies stay verbatim.
+ * (player_anims[] needs no alias: the rename leaves references to symbols
+ * defined in *other* translation units alone, so that extern keeps binding
+ * to core/steer.zig's export.)
  */
 
 #include <stdlib.h>
@@ -109,10 +118,14 @@ typedef struct {{
 
 /* Defined by the harness (core/steer_difftest.zig): the one world both sides
  * mutate, in the layout docs/checksum-format.md fixes. */
-extern player_t player[JNB_MAX_PLAYERS];
-extern object_t objects[NUM_OBJECTS];
-extern unsigned int ban_map[17][22];
+extern player_t player_raw[JNB_MAX_PLAYERS];
+extern object_t objects_raw[NUM_OBJECTS];
+extern unsigned int ban_map_raw[17][22];
 extern player_anim_t player_anims[7];
+
+#define player player_raw
+#define ban_map ban_map_raw
+#define objects objects_raw
 extern int pogostick, bunnies_in_space, jetpack, blood_is_thicker_than_water;
 extern int is_server, is_net;
 extern unsigned int rnd_call_count;

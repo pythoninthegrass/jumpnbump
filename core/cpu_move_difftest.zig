@@ -25,8 +25,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const cpu_move = @import("cpu_move.zig");
 
-extern var player: [4]cpu_move.Player;
-extern var ban_map: [17][22]c_uint;
+const player = &player_raw;
+const ban_map = &ban_map_raw;
+extern var player_raw: [4]cpu_move.Player;
+extern var ban_map_raw: [17][22]c_uint;
 extern var keyb: [256]i8;
 
 // core/c_ref/cpu_move.c — cpu_move_ref/map_tile_ref renamed to c_* by

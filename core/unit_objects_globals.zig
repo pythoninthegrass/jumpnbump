@@ -35,9 +35,9 @@ pub export var object_anims_store: [8]ObjectAnim = [_]ObjectAnim{.{}} ** 8;
 pub export var ban_map_store: [world.ban_rows][world.ban_cols]u32 = [_][world.ban_cols]u32{[_]u32{0} ** world.ban_cols} ** world.ban_rows;
 
 comptime {
-    @export(&objects_store, .{ .name = "objects" });
+    @export(&objects_store, .{ .name = "objects_raw" });
     @export(&object_anims_store, .{ .name = "object_anims" });
-    @export(&ban_map_store, .{ .name = "ban_map" });
+    @export(&ban_map_store, .{ .name = "ban_map_raw" });
     @export(&noop_add_pob, .{ .name = "add_pob" });
     @export(&noop_add_leftovers, .{ .name = "add_leftovers" });
 }

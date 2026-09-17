@@ -59,12 +59,16 @@ typedef struct {
 	int image;
 } object_t;
 
-/* Defined by the harness (core/objects_difftest.zig, which rebinds them onto
- * core/objects.zig's own exported storage): the one world both sides mutate,
- * in the layout docs/checksum-format.md fixes. */
-extern object_t objects[NUM_OBJECTS];
+/* Defined by core/c_ref/sim_harness.c (TASK-011.03's world-storage
+ * consolidation): the one world every difftest binary mutates, in the
+ * layout docs/checksum-format.md fixes. The #define below restores the
+ * bare names this extracted text uses throughout, the same way
+ * core/c_ref/steer.c/collision.c/cpu_move.c do. */
+extern object_t objects_raw[NUM_OBJECTS];
 extern object_anim_t object_anims[8];
-extern unsigned int ban_map[17][22];
+extern unsigned int ban_map_raw[17][22];
+#define objects objects_raw
+#define ban_map ban_map_raw
 
 /* main_info.draw_page and &object_gobs are the two draw-boundary operands the
  * extracted add_pob()/add_leftovers() call sites pass through. They never

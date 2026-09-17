@@ -76,9 +76,9 @@ pub const AnimFrame = extern struct {
 // memory.
 // ---------------------------------------------------------------------------
 
-extern var objects: [num_objects]Object;
+extern var objects_raw: [num_objects]Object;
 extern var object_anims: [8]ObjectAnim;
-extern var ban_map: [world.ban_rows][world.ban_cols]u32;
+extern var ban_map_raw: [world.ban_rows][world.ban_cols]u32;
 
 // The C's objects[]/object_anims[]/ban_map[] storage physically lives in
 // steer.zig (TASK-011.02's globals-ownership). This module declares additional
@@ -104,7 +104,7 @@ extern fn add_leftovers(which: c_int, x: c_int, y: c_int, frame: c_int, gobs: ?*
 /// from object_anims[anim].frame[frame]. When every slot is used the call is a
 /// silent no-op (the C's loop simply falls through).
 pub export fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: c_int, anim: c_int, frame: c_int) void {
-    for (&objects) |*o| {
+    for (&objects_raw) |*o| {
         if (o.used == 0) {
             o.used = 1;
             o.type = type_;
@@ -116,8 +116,14 @@ pub export fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: 
             o.y_acc = 0;
             o.anim = anim;
             o.frame = frame;
-            o.ticks = objectAnimRow(anim)[@as(u32, @bitCast(frame))].ticks;
-            o.image = objectAnimRow(anim)[@as(u32, @bitCast(frame))].image;
+            // Unchecked flat read, not objectAnimRow: collision.zig's gore
+            // spray calls add_object with frame indices past a single row
+            // (main.c:2408's own object_anims[anim].frame[frame] does the
+            // same raw read, landing in the next rows of the same table —
+            // see animFrameAt's own comment).
+            const af = animFrameAt(anim, frame);
+            o.ticks = af.ticks;
+            o.image = af.image;
             return;
         }
     }
@@ -129,7 +135,7 @@ pub export fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: 
 /// and the harness pads ban_map's backing the same way main.c's data segment
 /// lays it out, so identical inputs give identical reads.
 inline fn banMapCell(row: c_int, col: c_int) u32 {
-    const flat = @as([*]const u32, @ptrCast(&ban_map));
+    const flat = @as([*]const u32, @ptrCast(&ban_map_raw));
     const idx: i64 = @as(i64, @as(i32, @bitCast(row))) * @as(i64, world.ban_cols) +% @as(i64, @as(i32, @bitCast(col)));
     return flat[@as(u64, @bitCast(idx))];
 }
@@ -137,6 +143,22 @@ inline fn banMapCell(row: c_int, col: c_int) u32 {
 inline fn objectAnimRow(anim: c_int) *const [10]AnimFrame {
     const rows = @as([*]const ObjectAnim, @ptrCast(&object_anims));
     return &rows[@as(u32, @bitCast(anim))].frame;
+}
+
+/// object_anims[anim].frame[frame] read as one flat AnimFrame sequence
+/// (stride = sizeof(ObjectAnim)/sizeof(AnimFrame)), not a bounds-checked
+/// per-row array: gore frame indices deliberately run past a single row's
+/// 10 frames (main.c:2408's own object_anims[anim].frame[frame] does the
+/// same raw struct-array read), landing in the next rows of the same
+/// table exactly like the C.
+inline fn animFrameAt(anim: c_int, frame: c_int) *const AnimFrame {
+    const flat = @as([*]const AnimFrame, @ptrCast(&object_anims));
+    const stride: u32 = @divExact(@sizeOf(ObjectAnim), @sizeOf(AnimFrame));
+    // +1: num_frames/restart_frame (8 bytes) precede frame[] in each row,
+    // exactly one AnimFrame-sized slot, so frame[0] is flat index
+    // anim*stride + 1, not anim*stride.
+    const idx: u64 = @as(u64, @as(u32, @bitCast(anim)) *% stride +% @as(u32, @bitCast(frame)) +% 1);
+    return &flat[idx];
 }
 
 inline fn animNumFrames(anim: c_int) c_int {
@@ -185,7 +207,7 @@ fn octant(y_add: c_int, x_add: c_int) c_int {
 /// without drawing it.
 pub export fn update_objects() void {
     var s1: c_int = 0;
-    for (&objects) |*o| {
+    for (&objects_raw) |*o| {
         if (o.used != 1) continue;
         switch (@as(c_uint, @bitCast(o.type))) {
             obj_spring => {

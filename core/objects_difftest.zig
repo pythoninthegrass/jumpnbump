@@ -49,11 +49,16 @@ extern fn c_add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: c_
 // reference binds its extern declarations to these too.
 // ---------------------------------------------------------------------------
 
-// The C reference reads objects[]/object_anims[]/ban_map[] under those exact
-// names, but so do the Zig module's externs and steer.zig's exports — one set
-// of symbols. To reach them from this file without pulling in steer.zig (the
-// flies/cpu_move difftests alias them the same way), import steer.zig for its
-// exports and drive through those.
+// The C reference reads objects_raw[]/object_anims[]/ban_map_raw[] under
+// those exact names, and so do objects.zig's own externs — one set of
+// symbols, physically defined in steer.zig (TASK-011.02) but reached here
+// directly, the same way steer_difftest.zig/collision_difftest.zig/
+// cpu_move_difftest.zig each declare their own extern bindings to the shared
+// world rather than reaching through another module's (non-pub) exports.
+// object_anims[] wasn't part of that TASK-011.03 world-storage rename, so
+// it's still reached through steer.zig's own (still-pub) export.
+extern var objects_raw: [world.num_objects]world.Object;
+extern var ban_map_raw: [world.ban_rows][world.ban_cols]u32;
 const steer = @import("steer.zig");
 
 /// The default level's ban_map (main.c:74), the grid the particles bounce on.
@@ -176,13 +181,13 @@ const Snapshot = struct {
 
 fn snapshot() Snapshot {
     return .{
-        .objects = steer.objects,
+        .objects = objects_raw,
         .rnd_calls = rnd_mod.rnd_call_count,
     };
 }
 
 fn restore(s: *const Snapshot) void {
-    steer.objects = s.objects;
+    objects_raw = s.objects;
     rnd_mod.rnd_call_count = s.rnd_calls;
 }
 
@@ -190,7 +195,7 @@ fn compareObjects(name: []const u8, tick: usize, want: *const Snapshot, mismatch
     for (want.objects, 0..) |wo, i| {
         inline for (std.meta.fields(world.Object)) |f| {
             const wv: c_int = @field(wo, f.name);
-            const zv: c_int = @field(steer.objects[i], f.name);
+            const zv: c_int = @field(objects_raw[i], f.name);
             if (wv != zv) {
                 if (mismatches.* < 40) std.debug.print("{s} tick {d} objects[{d}].{s}: zig={d} != c={d}\n", .{ name, tick, i, f.name, zv, wv });
                 mismatches.* += 1;
@@ -231,8 +236,8 @@ fn compareDraws(name: []const u8, tick: usize, mismatches: *usize) void {
 // ---------------------------------------------------------------------------
 
 fn setupWorld() void {
-    steer.objects = std.mem.zeroes([world.num_objects]world.Object);
-    steer.ban_map = default_ban_map;
+    objects_raw = std.mem.zeroes([world.num_objects]world.Object);
+    ban_map_raw = default_ban_map;
     loadObjectAnims();
 }
 
@@ -245,7 +250,7 @@ fn setupWorld() void {
 /// keeps that read unchecked so it matches objects.zig's add_object instead of
 /// trapping on the out-of-range frame index.
 fn seedObject(slot: usize, type_: c_int, px: c_int, py: c_int, x_add: c_int, y_add: c_int, anim: c_int, frame: c_int) void {
-    const o = &steer.objects[slot];
+    const o = &objects_raw[slot];
     o.* = .{};
     o.used = 1;
     o.type = type_;
