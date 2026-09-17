@@ -9,7 +9,11 @@ calls with no game logic of its own (`TASK-012.04`). Follows the pattern in
 `~/git/neo_snake/extension/`. Depends on `third_party/godot-cpp` being
 vendored first (`TASK-004`).
 
-Placeholder until `TASK-012.04` builds the shim.
+Build with `scons target=template_debug` (or `target=template_release`)
+from this directory; the linked `core/zig-out/lib/libjumpnbump.a` must
+already exist (`cd ../core && zig build abi`). Produces
+`game/bin/libjumpnbump.<platform>.<target>.<arch>.so`, loaded by
+`game/bin/jumpnbump.gdextension` (`TASK-012.05`).
 
 ## Vendored dependency: `third_party/godot-cpp` (`TASK-004`)
 
