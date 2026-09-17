@@ -46,7 +46,7 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
@@ -107,6 +107,60 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
             });
             const net_globals_obj = b.addObject(.{ .name = "unit_net_globals", .root_module = net_globals_mod });
             mod.addObjectFile(net_globals_obj.getEmittedBin());
+            // TASK-011.04: steer_players() reaches add_object() as an extern fn
+            // (its canonical home moved to objects.zig). Link objects.zig's
+            // export for the standalone steer unit-test build. objects.zig's
+            // own extern globals (objects[]/object_anims[]/ban_map[]) resolve to
+            // steer.zig's exports in this compilation, so no separate backing TU
+            // is needed; only add_pob/add_leftovers (which neither steer.zig nor
+            // objects.zig defines) need stubs, and those come from
+            // unit_objects_globals' weak-free fn-only path below.
+            const objects_obj = b.addObject(.{
+                .name = "steer_unit_objects",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("objects.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod.addObjectFile(objects_obj.getEmittedBin());
+            // add_pob/add_leftovers stubs (objects.zig references them; the
+            // renderer boundary is out of the core). Only the two fns are
+            // exported here — the world arrays come from steer.zig above, so
+            // the arrays-exporting unit_objects_globals.zig would collide.
+            const obj_draw_obj = b.addObject(.{
+                .name = "steer_unit_objects_draw",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("unit_objects_draw.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod.addObjectFile(obj_draw_obj.getEmittedBin());
+        }
+        // TASK-011.04: objects.zig reaches rnd() as an extern fn (the
+        // no-@import rule) and links libm's atan2 only inside its octant()
+        // self-check (the reference the port replaces), so its Tier-A binary
+        // needs the same rnd object steer.zig uses plus libm.
+        if (std.mem.eql(u8, file, "objects.zig")) {
+            mod.addObjectFile(rnd_native.getEmittedBin());
+            mod.linkSystemLibrary("m", .{});
+            // The Zig TU exporting objects[]/object_anims[]/ban_map[]/add_pob/
+            // add_leftovers for standalone module builds (see
+            // core/unit_objects_globals.zig's header comment): objects.zig
+            // declares them extern (steer.zig owns them in the full build), so
+            // its own test binary needs backing definitions compiled as an
+            // object, not a test runner.
+            const obj_globals_mod = b.createModule(.{
+                .root_source_file = b.path("unit_objects_globals.zig"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            const obj_globals_obj = b.addObject(.{ .name = "unit_objects_globals", .root_module = obj_globals_mod });
+            mod.addObjectFile(obj_globals_obj.getEmittedBin());
         }
         const mod_test = b.addTest(.{ .root_module = mod });
         step.dependOn(&b.addRunArtifact(mod_test).step);
@@ -122,7 +176,7 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // first per-tick stateful replay: the C reference is extracted verbatim from
 // main.c by core/c_ref/extract_steered.py into core/c_ref/steer.c. Corpus-
 // replay entries join as later TASK-011.* ports land.
-const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig" };
+const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig", "objects_difftest.zig" };
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
@@ -168,6 +222,25 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
         "steer_players",
         "position_player",
     });
+    // TASK-011.04: objects.c is generated from main.c (see the script's
+    // docstring); the rename list is its two ported entry points. add_pob/
+    // add_leftovers are unrenamed (harness-owned, shared with the Zig port);
+    // the C's internal update_objects -> add_object call resolves to
+    // c_add_object through the same -D rename.
+    // sanitize_c = .off: the particle physics reads ban_map[y >> 20][x >> 20]
+    // at raw (sometimes negative or past-the-edge) indices exactly as the
+    // oracle does — a butterfly climbing to y < 0 or a fur blob flying off to
+    // x < -5*65536 — and the real binary falls through to whatever memory
+    // follows ban_map. Zig's C frontend instruments static-array indexing with
+    // runtime bounds checks that would trap instead; .off restores the oracle's
+    // actual (unsafe, but shared-memory-safe here) behaviour for this reference,
+    // the same way c_ref/cpu_move.c's map_tile mixup needs it. The harness pads
+    // ban_map's backing identically on both sides, so identical inputs give
+    // identical reads.
+    const objects_ref = compileRenamedCRefSanitized(b, target, optimize, "objects_c_ref", "c_ref/objects.c", &.{
+        "add_object",
+        "update_objects",
+    }, .off);
 
     for (diff_test_files) |file| {
         const mod = b.createModule(.{
@@ -193,6 +266,31 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
         if (std.mem.eql(u8, file, "steer_difftest.zig")) {
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(steer_ref);
+            // TASK-011.04: add_object()/update_objects() now live in
+            // objects.zig, which steer_difftest.zig @imports directly (so its
+            // root module already carries those exports — linking objects.zig a
+            // second time here would duplicate them). Only the draw stubs
+            // (add_pob/add_leftovers), which neither steer.zig nor objects.zig
+            // defines, are added as a separate object.
+            const steer_draw_obj = b.addObject(.{
+                .name = "steer_dt_objects_draw",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("unit_objects_draw.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod_test.root_module.addObjectFile(steer_draw_obj.getEmittedBin());
+        }
+        if (std.mem.eql(u8, file, "objects_difftest.zig")) {
+            // The C reference's rnd() goes through c_rnd_from -> rnd_mod.rnd
+            // (the harness's export), and objects.zig reaches rnd as an extern
+            // fn; both bind rnd.zig's export, so link it like the difftests
+            // above link rnd_ref. objects.c's atan2 is the oracle's own, kept
+            // intact in the reference for the octant comparison.
+            mod_test.root_module.addObjectFile(rnd_ref);
+            mod_test.root_module.addObjectFile(objects_ref);
         }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }

@@ -49,6 +49,12 @@ const std = @import("std");
 const rnd_mod = @import("rnd.zig");
 const world = @import("world.zig");
 const steer = @import("steer.zig");
+// TASK-011.04: add_object()'s canonical home moved from steer.zig to
+// objects.zig; steer_players() reaches it as an extern fn and the C reference
+// (c_steer_players) calls the same add_object symbol, so the harness drives
+// and the world both go through objects.add_object. objects.zig's own extern
+// globals (objects[]/object_anims[]/ban_map[]) resolve to steer.zig's exports.
+const objects_mod = @import("objects.zig");
 
 extern fn c_steer_players() void;
 extern fn c_position_player(player_num: c_int) void;
@@ -153,13 +159,13 @@ const default_ban_map = [world.ban_rows][world.ban_cols]u32{
 /// player_anims exactly like main.c:3269-3273.
 fn loadPlayerAnims() void {
     const data = [_]c_int{
-        1, 0, 0, 0x7fff, 0, 0, 0, 0, 0, 0,
-        4, 0, 0, 4, 1, 4, 2, 4, 3, 4,
-        1, 0, 4, 0x7fff, 0, 0, 0, 0, 0, 0,
-        4, 2, 5, 8, 6, 10, 7, 3, 6, 3,
-        1, 0, 6, 0x7fff, 0, 0, 0, 0, 0, 0,
-        2, 1, 5, 8, 4, 0x7fff, 0, 0, 0, 0,
-        1, 0, 8, 5, 0, 0, 0, 0, 0, 0,
+        1, 0, 0, 0x7fff, 0, 0,      0, 0, 0, 0,
+        4, 0, 0, 4,      1, 4,      2, 4, 3, 4,
+        1, 0, 4, 0x7fff, 0, 0,      0, 0, 0, 0,
+        4, 2, 5, 8,      6, 10,     7, 3, 6, 3,
+        1, 0, 6, 0x7fff, 0, 0,      0, 0, 0, 0,
+        2, 1, 5, 8,      4, 0x7fff, 0, 0, 0, 0,
+        1, 0, 8, 5,      0, 0,      0, 0, 0, 0,
     };
     for (0..7) |a| {
         steer.player_anims[a].num_frames = data[a * 10];
@@ -204,7 +210,7 @@ fn loadObjectAnims() void {
 fn seedLevelObjects() void {
     for (0..16) |r| for (0..22) |col| {
         if (steer.ban_map[r][col] == steer.ban_spring) {
-            steer.add_object(0, @intCast(col * 16), @intCast(r * 16), 0, 0, 0, 5);
+            objects_mod.add_object(0, @intCast(col * 16), @intCast(r * 16), 0, 0, 0, 5);
         }
     };
     const kinds = [_]c_int{ 3, 3, 4, 4 }; // OBJ_YEL_BUTFLY x2, OBJ_PINK_BUTFLY x2
@@ -217,7 +223,7 @@ fn seedLevelObjects() void {
                 const vy: c_int = (s2 << 4) +% 8;
                 const va: c_int = @bitCast(@as(u32, @bitCast(@as(c_int, rnd_mod.rnd(65535)) -% 32768)) *% 2);
                 const vb: c_int = @bitCast(@as(u32, @bitCast(@as(c_int, rnd_mod.rnd(65535)) -% 32768)) *% 2);
-                steer.add_object(kind, vx, vy, va, vb, 0, 0);
+                objects_mod.add_object(kind, vx, vy, va, vb, 0, 0);
                 break;
             }
         }
@@ -420,7 +426,6 @@ fn setupWorld() void {
 
 const corpus_traces = @import("corpus_traces.zig");
 const Trace = corpus_traces.Trace;
-
 
 test "steer.zig matches the extracted C reference across the water/ice/spring/jump traces" {
     var mismatches: usize = 0;
