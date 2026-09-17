@@ -46,10 +46,26 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
+    // steer.zig (and every future port that reaches another subsystem's
+    // C-named global through the playbook's extern pattern — extern fn rnd,
+    // extern var is_server) needs those names resolvable when its module is
+    // built standalone. Compile the originals for this step only: rnd from
+    // the same c_ref/rnd.c the Tier-B reference is built from (byte-identical
+    // logic to core/rnd.zig's export, so unit tests exercise the identical
+    // libc rand()-backed stream), with the rename suppressed so it keeps the
+    // original name; is_server as an exported Zig global pinned to the
+    // single-player value.
+    const rnd_native_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    rnd_native_mod.addCSourceFile(.{ .file = b.path("c_ref/rnd.c"), .flags = &.{"-fwrapv"} });
+    const rnd_native = b.addObject(.{ .name = "rnd_unit_ref", .root_module = rnd_native_mod });
     for (unit_test_files) |file| {
         const mod = b.createModule(.{
             .root_source_file = b.path(file),
@@ -58,6 +74,40 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
             .link_libc = true,
         });
         mod.linkSystemLibrary("bz2", .{});
+        // TASK-011.06: flies.zig reaches rnd() as an extern fn (the
+        // no-@import rule), so its Tier-A binary links rnd.zig's object the
+        // same way the difftest entries link their renamed-C references.
+        if (std.mem.eql(u8, file, "flies.zig")) {
+            const rnd_obj = b.addObject(.{
+                .name = "flies_unit_rnd",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("rnd.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod.addObjectFile(rnd_obj.getEmittedBin());
+        }
+        // TASK-011.02: steer.zig (and every future port that reaches
+        // another subsystem's C-named global through the playbook's extern
+        // pattern — extern fn rnd, extern var is_server) needs those names
+        // resolvable when its module is built standalone.
+        if (std.mem.eql(u8, file, "steer.zig")) {
+            mod.addObjectFile(rnd_native.getEmittedBin());
+            // The Zig TU exporting is_server/is_net for standalone module
+            // builds (see core/unit_net_globals.zig's header comment): compiled
+            // as an object, not a test runner, so the module's own test binary
+            // stays the single entry point.
+            const net_globals_mod = b.createModule(.{
+                .root_source_file = b.path("unit_net_globals.zig"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            const net_globals_obj = b.addObject(.{ .name = "unit_net_globals", .root_module = net_globals_mod });
+            mod.addObjectFile(net_globals_obj.getEmittedBin());
+        }
         const mod_test = b.addTest(.{ .root_module = mod });
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
@@ -68,9 +118,11 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // zelda3's compileRenamedCRef technique) and its ported .zig module, replayed
 // over the TASK-008 corpus. rnd_difftest.zig started as the TASK-008.04
 // harness pilot; as of TASK-011.01 it carries the real rnd(), fixed16 and
-// world-layout differentials. Corpus-replay entries join as later TASK-011.*
-// ports land.
-const diff_test_files = [_][]const u8{"rnd_difftest.zig"};
+// world-layout differentials, and steer_difftest.zig (TASK-011.02) is the
+// first per-tick stateful replay: the C reference is extracted verbatim from
+// main.c by core/c_ref/extract_steered.py into core/c_ref/steer.c. Corpus-
+// replay entries join as later TASK-011.* ports land.
+const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig" };
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
@@ -82,6 +134,7 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
     const rnd_ref = compileRenamedCRef(b, target, optimize, "rnd_c_ref", "c_ref/rnd.c", &.{"rnd"});
     // TASK-011.01: the fixed16 helpers are renamed at their _ref suffix so
     // each C expression keeps a name distinct from the Zig helper it mirrors.
+    const cpu_move_ref = compileRenamedCRefSanitized(b, target, optimize, "cpu_move_c_ref", "c_ref/cpu_move.c", &.{ "cpu_move_ref", "map_tile_ref" }, .off);
     const fixed16_ref = compileRenamedCRef(b, target, optimize, "fixed16_c_ref", "c_ref/fixed16.c", &.{
         "fp_add_ref",
         "fp_sub_ref",
@@ -100,6 +153,21 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
         "fp_pixel_shl4_ref",
         "fp_to_tile20_ref",
     });
+    // TASK-011.06: get_closest_player_to_point/update_flies/spawn_flies
+    // renamed so they don't collide with flies.zig's own exports of those
+    // names.
+    const flies_ref = compileRenamedCRef(b, target, optimize, "flies_c_ref", "c_ref/flies.c", &.{
+        "get_closest_player_to_point",
+        "update_flies",
+        "spawn_flies",
+    });
+    // TASK-011.02: steer.c is generated from main.c (see the script's
+    // docstring); the rename list is its two ported entry points — the
+    // reference's own helpers are file-static or already c_-prefixed.
+    const steer_ref = compileRenamedCRef(b, target, optimize, "steer_c_ref", "c_ref/steer.c", &.{
+        "steer_players",
+        "position_player",
+    });
 
     for (diff_test_files) |file| {
         const mod = b.createModule(.{
@@ -108,10 +176,23 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
             .optimize = optimize,
             .link_libc = true,
         });
+        mod.linkSystemLibrary("m", .{});
         const mod_test = b.addTest(.{ .root_module = mod });
         if (std.mem.eql(u8, file, "rnd_difftest.zig")) {
             mod_test.root_module.addObjectFile(rnd_ref);
             mod_test.root_module.addObjectFile(fixed16_ref);
+        }
+        if (std.mem.eql(u8, file, "cpu_move_difftest.zig")) {
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/cpu_move_harness.c"), .flags = &.{"-fwrapv"} });
+            mod_test.root_module.addObjectFile(cpu_move_ref);
+        }
+        if (std.mem.eql(u8, file, "flies_difftest.zig")) {
+            mod_test.root_module.addCSourceFile(.{ .file = b.path("c_ref/flies_harness.c"), .flags = &.{"-fwrapv"} });
+            mod_test.root_module.addObjectFile(flies_ref);
+        }
+        if (std.mem.eql(u8, file, "steer_difftest.zig")) {
+            mod_test.root_module.addObjectFile(rnd_ref);
+            mod_test.root_module.addObjectFile(steer_ref);
         }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
@@ -129,10 +210,24 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
 // invocation on macOS). Ported verbatim from zelda3's build.zig
 // (compileRenamedCRef).
 fn compileRenamedCRef(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, name: []const u8, src: []const u8, syms: []const []const u8) std.Build.LazyPath {
+    return compileRenamedCRefSanitized(b, target, optimize, name, src, syms, null);
+}
+
+// cpu_move.c (TASK-011.05) deliberately exercises main.c's own map_tile
+// bounds-check mixup (pos_x checked against 17, pos_y against 22, on a
+// 22-column/17-row grid), reading past ban_map[][] the same way the real
+// oracle binary does. Zig's C frontend instruments static-array indexing
+// with the same runtime bounds checks as Zig's own arrays in Debug/
+// ReleaseSafe, which would trap on that read instead of letting it fall
+// through to whatever memory follows — sanitize_c = .off restores the
+// oracle's actual (unsafe, but not undefined for this shared-memory
+// harness) behavior for just this one reference object.
+fn compileRenamedCRefSanitized(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, name: []const u8, src: []const u8, syms: []const []const u8, sanitize_c: ?std.zig.SanitizeC) std.Build.LazyPath {
     const ref_mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .sanitize_c = sanitize_c,
     });
     // -fwrapv: signed overflow is UB in the abstract and this codebase
     // relies on two's-complement wraparound in practice (the oracle

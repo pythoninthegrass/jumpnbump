@@ -1,0 +1,791 @@
+// Port of main.c's steer_players() (main.c:2069) and position_player()
+// (main.c:2363) — TASK-011.02: horizontal acceleration per tile type, the
+// jump/gravity/jetpack/pogostick velocity rules, and the x/y integration
+// with wall, ceiling, spring, and water contact handling, all in 16.16
+// fixed-point (docs/porting-playbook.md's no-float rule).
+//
+// The C reaches this through game_loop() once per tick, after cpu_move()
+// and update_player_actions() have written player[].action_* (TASK-011.05
+// and the input layer own those; this module treats them as inputs, same as
+// the C does — the prologue's two calls are the only lines of the function
+// this port does not reproduce).
+//
+// State: this module owns the backing storage for everything steer_players
+// touches — player[]/objects[]/ban_map (in core/world.zig's canonical
+// layout, the playbook's globals-ownership rule naming this subsystem's
+// module as their home on the Zig side), the anim tables, and the
+// physics-mode globals (pogostick/bunnies_in_space/jetpack/
+// blood_is_thicker_than_water, main.c:240) — as exported globals under the
+// original C names. The difftest (core/steer_difftest.zig) points the C
+// reference side at this same storage, so both sides mutate one world; the
+// later ABI/game-loop layers reach it the same way. rnd()/rnd_call_count
+// come from core/rnd.zig through the playbook's extern-fn cross-module
+// pattern (no @import between ported modules).
+//
+// Audio: the C's dj_play_sfx(SFX_x, (unsigned short)(SFX_x_FREQ + rnd(2000)
+// - cut), ...) call sites are exactly where steer_players' checksummed
+// rnd() draws happen (docs/checksum-format.md), so sfxAt() below evaluates
+// the same frequency expression — draw included — and drops the result.
+// The body is a no-op placeholder (core purity, TASK-011.08); the
+// TASK-011.07 pump replaces it with event-stream emission.
+//
+// Arithmetic: every fixed-point operation routes through core/fixed16.zig's
+// wrapping helpers so Zig's trapping arithmetic and @intCast range checks
+// can never diverge from the C's silent two's-complement wraparound. Array
+// indexing by raw anim/frame fields uses @bitCast (never @intCast) to keep
+// the C's unchecked-memory semantics, including reads that run off the end
+// of player_anims[] when a frame counter sits at the C's 0x7fff animation
+// sentinel (the table is followed by other globals in main.c's data
+// segment; the harness pads it the same way, so identical inputs give
+// identical reads).
+const std = @import("std");
+const fixed16 = @import("fixed16.zig");
+const world = @import("world.zig");
+
+const Fixed = fixed16.Fixed;
+const Player = world.Player;
+const Object = world.Object;
+const max_players = world.max_players;
+const num_objects = world.num_objects;
+
+pub const ban_void: u32 = 0; // BAN_VOID
+pub const ban_solid: u32 = 1; // BAN_SOLID
+pub const ban_water: u32 = 2; // BAN_WATER
+pub const ban_ice: u32 = 3; // BAN_ICE
+pub const ban_spring: u32 = 4; // BAN_SPRING
+
+const obj_spring: c_int = 0; // OBJ_SPRING
+const obj_splash: c_int = 1; // OBJ_SPLASH
+const obj_smoke: c_int = 2; // OBJ_SMOKE
+const obj_anim_splash: c_int = 1; // OBJ_ANIM_SPLASH
+const obj_anim_smoke: c_int = 2; // OBJ_ANIM_SMOKE
+
+/// player_anim_t (globals.pre:218) — mirrored struct twin for the anim
+/// tables steer_players reads.
+pub const PlayerAnim = extern struct {
+    num_frames: c_int = 0,
+    restart_frame: c_int = 0,
+    frame: [4]AnimFrame = [_]AnimFrame{.{}} ** 4,
+};
+
+/// One row of main.c's object_anims (main.c:96-103): 10 frames.
+pub const ObjectAnim = extern struct {
+    num_frames: c_int = 0,
+    restart_frame: c_int = 0,
+    frame: [10]AnimFrame = [_]AnimFrame{.{}} ** 10,
+};
+
+pub const AnimFrame = extern struct {
+    image: c_int = 0,
+    ticks: c_int = 0,
+};
+
+// ---------------------------------------------------------------------------
+// World storage. player[]/objects[]/ban_map in core/world.zig's canonical
+// layout (the playbook's globals-ownership rule: steer.zig is where they
+// live on the Zig side), owned here as exported globals. The Tier-B
+// harness @import()s this module and reads/writes these same variables,
+// and core/c_ref/steer.c binds its extern declarations to them through
+// the C linkage names — one world for both sides of the differential
+// (the harness's own arena was the first draft and produced exactly the
+// vacuity trap the coverage probe below catches: two storages, each side
+// mutating its own copy). The game-loop layer will fill the same storage
+// from init_level().'
+//
+// The default values mirror a cold-start main.c: zeroed player[]/objects[]
+// and the built-in grid of main.c:74 (what read_level()/levelmap.txt
+// overwrite once the level-loading port owns it).
+// ---------------------------------------------------------------------------
+
+pub export var player: [max_players]Player = [_]Player{.{}} ** max_players;
+pub export var objects: [num_objects]Object = [_]Object{.{}} ** num_objects;
+pub export var ban_map: [world.ban_rows][world.ban_cols]u32 = default_ban_map;
+
+/// The anim tables (player_anim_t from globals.pre:218 / main.c's
+/// object_anims). Owned and exported here — like the mode flags below and
+/// rnd_call_count in core/rnd.zig: the harness configures them through
+/// these same variables, so there is one storage by construction. (The C
+/// reference binds same-named externs to these exports at link time.)
+pub export var player_anims: [7]PlayerAnim = [_]PlayerAnim{.{}} ** 7;
+pub export var object_anims: [8]ObjectAnim = [_]ObjectAnim{.{}} ** 8;
+
+/// pogostick/bunnies_in_space/jetpack/blood_is_thicker_than_water
+/// (main.c:240) — keyboard-cheat mode flags steer_players() reads. Owned
+/// and exported here (like rnd_call_count in core/rnd.zig: subsystem state
+/// with no C-side twin to share — the harness sets them through these same
+/// exports, so there is one storage by construction).
+pub export var pogostick: c_int = 0;
+pub export var bunnies_in_space: c_int = 0;
+pub export var jetpack: c_int = 0;
+pub export var blood_is_thicker_than_water: c_int = 0;
+
+/// The level's built-in grid from main.c:74 — what read_level()/levelmap.txt
+/// overwrite once the level-loading port owns it; the default keeps the
+/// module standalone (and matches the grid the corpus was recorded against).
+const default_ban_map = [world.ban_rows][world.ban_cols]u32{
+    .{ 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+    .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0 },
+    .{ 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+    .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1 },
+    .{ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
+    .{ 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
+    .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1 },
+    .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1 },
+    .{ 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1 },
+    .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 0, 0, 0, 0, 0, 0, 1 },
+    .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1 },
+    .{ 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1 },
+    .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
+    .{ 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1 },
+    .{ 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 0, 0, 0, 0, 0, 1, 3, 3, 3, 1, 1, 1 },
+    .{ 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+};
+
+/// GET_BAN_MAP_XY (main.c:94) — ban_map[(y) >> 4][(x) >> 4] read unguarded,
+/// exactly like the C macro: steer_players clamps s2 but never s1, so
+/// out-of-grid probes happen and read neighbouring memory. The flat
+/// pointer keeps that byte-for-byte as long as the surrounding storage
+/// matches (the difftest shares one grid, so it matches by construction).
+inline fn banTile(x: Fixed, y: Fixed) u32 {
+    const row: usize = @as(u32, @bitCast(y >> 4));
+    const col: usize = @as(u32, @bitCast(x >> 4));
+    const flat = @as([*]const u32, @ptrCast(&ban_map));
+    return flat[row * world.ban_cols + col];
+}
+
+/// GET_BAN_MAP_IN_WATER (main.c:2066) — void above the feet at +7 px and
+/// water at +8 px across either half of the 16-px-wide sprite.
+inline fn banMapInWater(s1: Fixed, s2: Fixed) bool {
+    return (banTile(s1, s2 + 7) == ban_void or banTile(s1 + 15, s2 + 7) == ban_void) and
+        (banTile(s1, s2 + 8) == ban_water or banTile(s1 + 15, s2 + 8) == ban_water);
+}
+
+/// player_anims[anim].frame[frame].image + direction * 9 — the image
+/// recompute repeated ~15 times across steer_players(). Unchecked
+/// (bit-punned) indexing: the C reads straight past the 4-frame row when
+/// frame sits at the 0x7fff idle sentinel, landing on whatever follows the
+/// table, and the port reproduces that read from the same shared table
+/// rather than clamping and disagreeing about it.
+inline fn playerImage(p: *const Player) c_int {
+    const anims = @as([*]const PlayerAnim, @ptrCast(&player_anims));
+    const anim: usize = @as(u32, @bitCast(p.anim));
+    const fr: usize = @as(u32, @bitCast(p.frame));
+    return anims[anim].frame[fr].image +% (p.direction *% 9);
+}
+
+inline fn playerAnimTicks(anim: c_int, frame: c_int) c_int {
+    const anims = @as([*]const PlayerAnim, @ptrCast(&player_anims));
+    return anims[@as(u32, @bitCast(anim))].frame[@as(u32, @bitCast(frame))].ticks;
+}
+
+inline fn playerAnimFrames(anim: c_int) c_int {
+    const anims = @as([*]const PlayerAnim, @ptrCast(&player_anims));
+    return anims[@as(u32, @bitCast(anim))].num_frames;
+}
+
+inline fn playerAnimRestart(anim: c_int) c_int {
+    const anims = @as([*]const PlayerAnim, @ptrCast(&player_anims));
+    return anims[@as(u32, @bitCast(anim))].restart_frame;
+}
+
+/// player_action_left (main.c:1771) — static in the C; file-private here
+/// too, reached only through steer_players().
+fn playerActionLeft(p: *Player) void {
+    const s1: Fixed = fixed16.shr16(p.x);
+    const s2: Fixed = fixed16.shr16(p.y);
+    const below_left = banTile(s1, s2 + 16);
+    const below = banTile(s1 + 8, s2 + 16);
+    const below_right = banTile(s1 + 15, s2 + 16);
+
+    if (below == ban_ice) {
+        if (p.x_add > 0) {
+            p.x_add = fixed16.sub(p.x_add, 1024);
+        } else {
+            p.x_add = fixed16.sub(p.x_add, 768);
+        }
+    } else if ((below_left != ban_solid and below_right == ban_ice) or (below_left == ban_ice and below_right != ban_solid)) {
+        if (p.x_add > 0) {
+            p.x_add = fixed16.sub(p.x_add, 1024);
+        } else {
+            p.x_add = fixed16.sub(p.x_add, 768);
+        }
+    } else {
+        if (p.x_add > 0) {
+            p.x_add = fixed16.sub(p.x_add, 16384);
+            if (p.x_add > -98304 and p.in_water == 0 and below == ban_solid) smokePuff(p);
+        } else {
+            p.x_add = fixed16.sub(p.x_add, 12288);
+        }
+    }
+    if (p.x_add < -98304) p.x_add = -98304;
+    p.direction = 1;
+    if (p.anim == 0) {
+        p.anim = 1;
+        p.frame = 0;
+        p.frame_tick = 0;
+        p.image = playerImage(p);
+    }
+}
+
+/// player_action_right (main.c:1812).
+fn playerActionRight(p: *Player) void {
+    const s1: Fixed = fixed16.shr16(p.x);
+    const s2: Fixed = fixed16.shr16(p.y);
+    const below_left = banTile(s1, s2 + 16);
+    const below = banTile(s1 + 8, s2 + 16);
+    const below_right = banTile(s1 + 15, s2 + 16);
+
+    if (below == ban_ice) {
+        if (p.x_add < 0) {
+            p.x_add = fixed16.add(p.x_add, 1024);
+        } else {
+            p.x_add = fixed16.add(p.x_add, 768);
+        }
+    } else if ((below_left != ban_solid and below_right == ban_ice) or (below_left == ban_ice and below_right != ban_solid)) {
+        if (p.x_add > 0) {
+            p.x_add = fixed16.add(p.x_add, 1024);
+        } else {
+            p.x_add = fixed16.add(p.x_add, 768);
+        }
+    } else {
+        if (p.x_add < 0) {
+            p.x_add = fixed16.add(p.x_add, 16384);
+            if (p.x_add < 98304 and p.in_water == 0 and below == ban_solid) smokePuff(p);
+        } else {
+            p.x_add = fixed16.add(p.x_add, 12288);
+        }
+    }
+    if (p.x_add > 98304) p.x_add = 98304;
+    p.direction = 0;
+    if (p.anim == 0) {
+        p.anim = 1;
+        p.frame = 0;
+        p.frame_tick = 0;
+        p.image = playerImage(p);
+    }
+}
+
+/// The add_object(OBJ_SMOKE, ...) call shared by both action handlers
+/// (main.c:1800, main.c:1841): the three rnd() draws (9, 5, 8192) happen in
+/// argument order, left to right.
+fn smokePuff(p: *const Player) void {
+    const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 2), rnd(9));
+    const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 13), rnd(5));
+    const y_add = fixed16.sub(-16384, rnd(8192));
+    add_object(obj_smoke, x, y, 0, y_add, obj_anim_smoke, 0);
+}
+
+/// steer_players (main.c:2069) minus the cpu_move()/update_player_actions()
+/// prologue (TASK-011.05 owns the AI; the input layer owns action_*),
+/// exported under the original C name. s1/s2 are the C's scratch pixel
+/// coordinates, reused across blocks exactly as the C reuses them — the
+/// jetpack branch's GET_BAN_MAP_IN_WATER reads whatever s1/s2 the last
+/// block left behind, and that stale read is observable state (it clears
+/// in_water or it doesn't), so the carry-over is reproduced bit-for-bug.
+pub var spring_branch_off: c_int = 1; // sab: skip object reset
+
+pub export fn steer_players() void {
+    var s1: Fixed = 0;
+    var s2: Fixed = 0;
+
+    for (&player, 0..) |*p, c1| {
+        if (p.enabled != 1) continue;
+
+        if (p.dead_flag == 0) {
+
+            if (p.action_left != 0 and p.action_right != 0) {
+                if (p.direction == 0) {
+                    if (p.action_right != 0) playerActionRight(p);
+                } else {
+                    if (p.action_left != 0) playerActionLeft(p);
+                }
+            } else if (p.action_left != 0) {
+                playerActionLeft(p);
+            } else if (p.action_right != 0) {
+                playerActionRight(p);
+            } else if (p.action_left == 0 and p.action_right == 0) {
+                s1 = fixed16.shr16(p.x);
+                s2 = fixed16.shr16(p.y);
+                const below_left = banTile(s1, s2 + 16);
+                const below = banTile(s1 + 8, s2 + 16);
+                const below_right = banTile(s1 + 15, s2 + 16);
+                if (below == ban_solid or below == ban_spring or
+                    ((below_left == ban_solid or below_left == ban_spring) and below_right != ban_ice) or
+                    (below_left != ban_ice and (below_right == ban_solid or below_right == ban_spring)))
+                {
+                    if (p.x_add < 0) {
+                        p.x_add = fixed16.add(p.x_add, 16384);
+                        if (p.x_add > 0) p.x_add = 0;
+                    } else {
+                        p.x_add = fixed16.sub(p.x_add, 16384);
+                        if (p.x_add < 0) p.x_add = 0;
+                    }
+                    if (p.x_add != 0 and banTile(s1 + 8, s2 + 16) == ban_solid) {
+                        const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 2), rnd(9));
+                        const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 13), rnd(5));
+                        const y_add = fixed16.sub(-16384, rnd(8192));
+                        add_object(obj_smoke, x, y, 0, y_add, obj_anim_smoke, 0);
+                    }
+                }
+                if (p.anim == 1) {
+                    p.anim = 0;
+                    p.frame = 0;
+                    p.frame_tick = 0;
+                    p.image = playerImage(p);
+                }
+            }
+            if (jetpack == 0) {
+                // no jetpack
+                if (pogostick == 1 or (p.jump_ready == 1 and p.action_up != 0)) {
+                    s1 = fixed16.shr16(p.x);
+                    s2 = fixed16.shr16(p.y);
+                    if (s2 < -16) s2 = -16;
+                    // jump
+                    if (banTile(s1, s2 + 16) == ban_solid or banTile(s1, s2 + 16) == ban_ice or
+                        banTile(s1 + 15, s2 + 16) == ban_solid or banTile(s1 + 15, s2 + 16) == ban_ice)
+                    {
+                        p.y_add = -280000;
+                        p.anim = 2;
+                        p.frame = 0;
+                        p.frame_tick = 0;
+                        p.image = playerImage(p);
+                        p.jump_ready = 0;
+                        p.jump_abort = 1;
+                        if (pogostick == 0) {
+                            sfxAt(sfx_jump, sfx_jump_freq, 1000);
+                        } else {
+                            sfxAt(sfx_spring, sfx_spring_freq, 1000);
+                        }
+                    }
+                    // jump out of water
+                    if (banMapInWater(s1, s2)) {
+                        p.y_add = -196608;
+                        p.in_water = 0;
+                        p.anim = 2;
+                        p.frame = 0;
+                        p.frame_tick = 0;
+                        p.image = playerImage(p);
+                        p.jump_ready = 0;
+                        p.jump_abort = 1;
+                        if (pogostick == 0) {
+                            sfxAt(sfx_jump, sfx_jump_freq, 1000);
+                        } else {
+                            sfxAt(sfx_spring, sfx_spring_freq, 1000);
+                        }
+                    }
+                }
+                // fall down by gravity
+                if (pogostick == 0 and p.action_up == 0) {
+                    p.jump_ready = 1;
+                    if (p.in_water == 0 and p.y_add < 0 and p.jump_abort == 1) {
+                        if (bunnies_in_space == 0) {
+                            // normal gravity
+                            p.y_add = fixed16.add(p.y_add, 32768);
+                        } else {
+                            // light gravity
+                            p.y_add = fixed16.add(p.y_add, 16384);
+                        }
+                        if (p.y_add > 0) p.y_add = 0;
+                    }
+                }
+            } else {
+                // with jetpack
+                if (p.action_up != 0) {
+                    p.y_add = fixed16.sub(p.y_add, 16384);
+                    if (p.y_add < -400000) p.y_add = -400000;
+                    if (banMapInWater(s1, s2)) p.in_water = 0;
+                    if (rnd(100) < 50) {
+                        const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 6), rnd(5));
+                        const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 10), rnd(5));
+                        const y_add = fixed16.add(16384, rnd(8192));
+                        add_object(obj_smoke, x, y, 0, y_add, obj_anim_smoke, 0);
+                    }
+                }
+            }
+
+            p.x = fixed16.add(p.x, p.x_add);
+            if (fixed16.shr16(p.x) < 0) {
+                p.x = 0;
+                p.x_add = 0;
+            }
+            if (fixed16.add(fixed16.shr16(p.x), 15) > 351) {
+                p.x = fixed16.shl16Raw(336);
+                p.x_add = 0;
+            }
+            {
+                if (p.y > 0) {
+                    s2 = fixed16.shr16(p.y);
+                } else {
+                    // check top line only
+                    s2 = 0;
+                }
+
+                s1 = fixed16.shr16(p.x);
+                if (banTile(s1, s2) == ban_solid or banTile(s1, s2) == ban_ice or banTile(s1, s2) == ban_spring or
+                    banTile(s1, s2 + 15) == ban_solid or banTile(s1, s2 + 15) == ban_ice or banTile(s1, s2 + 15) == ban_spring)
+                {
+                    p.x = fixed16.wrapDownToTile(s1);
+                    p.x_add = 0;
+                }
+
+                s1 = fixed16.shr16(p.x);
+                if (banTile(s1 + 15, s2) == ban_solid or banTile(s1 + 15, s2) == ban_ice or banTile(s1 + 15, s2) == ban_spring or
+                    banTile(s1 + 15, s2 + 15) == ban_solid or banTile(s1 + 15, s2 + 15) == ban_ice or banTile(s1 + 15, s2 + 15) == ban_spring)
+                {
+                    p.x = fixed16.wrapDownToTilePrev(s1);
+                    p.x_add = 0;
+                }
+            }
+
+            p.y = fixed16.add(p.y, p.y_add);
+
+            s1 = fixed16.shr16(p.x);
+            s2 = fixed16.shr16(p.y);
+            if (banTile(s1 + 8, s2 + 15) == ban_spring or
+                (banTile(s1, s2 + 15) == ban_spring and banTile(s1 + 15, s2 + 15) != ban_solid) or
+                (banTile(s1, s2 + 15) != ban_solid and banTile(s1 + 15, s2 + 15) == ban_spring))
+            {
+                p.y = fixed16.snapFixedToTile(p.y);
+                p.y_add = -400000;
+                p.anim = 2;
+                p.frame = 0;
+                p.frame_tick = 0;
+                p.image = playerImage(p);
+                p.jump_ready = 0;
+                p.jump_abort = 0;
+                if (spring_branch_off == 0) springAnimation(s1, s2);
+                sfxAt(sfx_spring, sfx_spring_freq, 1000);
+            }
+            s1 = fixed16.shr16(p.x);
+            s2 = fixed16.shr16(p.y);
+            if (s2 < 0) s2 = 0;
+            if (banTile(s1, s2) == ban_solid or banTile(s1, s2) == ban_ice or banTile(s1, s2) == ban_spring or
+                banTile(s1 + 15, s2) == ban_solid or banTile(s1 + 15, s2) == ban_ice or banTile(s1 + 15, s2) == ban_spring)
+            {
+                p.y = fixed16.wrapDownToTile(s2);
+                p.y_add = 0;
+                p.anim = 0;
+                p.frame = 0;
+                p.frame_tick = 0;
+                p.image = playerImage(p);
+            }
+            s1 = fixed16.shr16(p.x);
+            s2 = fixed16.shr16(p.y);
+            if (s2 < 0) s2 = 0;
+            if (banTile(s1 + 8, s2 + 8) == ban_water) {
+                if (p.in_water == 0) {
+                    // falling into water
+                    p.in_water = 1;
+                    p.anim = 4;
+                    p.frame = 0;
+                    p.frame_tick = 0;
+                    p.image = playerImage(p);
+                    if (p.y_add >= 32768) {
+                        const splash_x = fixed16.add(fixed16.shr16(p.x), 8);
+                        const splash_y = fixed16.add(fixed16.shr16(p.y) & 0xfff0, 15);
+                        add_object(obj_splash, splash_x, splash_y, 0, 0, obj_anim_splash, 0);
+                        if (blood_is_thicker_than_water == 0) {
+
+                            sfxAt(sfx_splash, sfx_splash_freq, 1000);
+                        } else {
+                            sfxAt(sfx_splash, sfx_splash_freq, 5000);
+                        }
+                    }
+                }
+                // slowly move up to water surface
+                p.y_add = fixed16.sub(p.y_add, 1536);
+                if (p.y_add < 0 and p.anim != 5) {
+                    p.anim = 5;
+                    p.frame = 0;
+                    p.frame_tick = 0;
+                    p.image = playerImage(p);
+                }
+                if (p.y_add < -65536) p.y_add = -65536;
+                if (p.y_add > 65535) p.y_add = 65535;
+                if (banTile(s1, s2 + 15) == ban_solid or banTile(s1, s2 + 15) == ban_ice or
+                    banTile(s1 + 15, s2 + 15) == ban_solid or banTile(s1 + 15, s2 + 15) == ban_ice)
+                {
+                    p.y = fixed16.wrapDownToTilePrev(s2);
+                    p.y_add = 0;
+                }
+            } else if (banTile(s1, s2 + 15) == ban_solid or banTile(s1, s2 + 15) == ban_ice or banTile(s1, s2 + 15) == ban_spring or
+                banTile(s1 + 15, s2 + 15) == ban_solid or banTile(s1 + 15, s2 + 15) == ban_ice or banTile(s1 + 15, s2 + 15) == ban_spring)
+            {
+                p.in_water = 0;
+                p.y = fixed16.wrapDownToTilePrev(s2);
+                p.y_add = 0;
+                if (p.anim != 0 and p.anim != 1) {
+                    p.anim = 0;
+                    p.frame = 0;
+                    p.frame_tick = 0;
+                    p.image = playerImage(p);
+                }
+            } else {
+                if (p.in_water == 0) {
+                    if (bunnies_in_space == 0) {
+                        p.y_add = fixed16.add(p.y_add, 12288);
+                    } else {
+                        p.y_add = fixed16.add(p.y_add, 6144);
+                    }
+                    if (p.y_add > 327680) p.y_add = 327680;
+                } else {
+                    // (y & 0xffff0000) + 0x10000: next whole pixel up with
+                    // the fraction dropped — a snap fixed16 has no named
+                    // helper for, so it wraps through u32 explicitly.
+                    p.y = @bitCast((@as(u32, @bitCast(p.y)) & 0xffff_0000) +% 0x1_0000);
+                    p.y_add = 0;
+                }
+                p.in_water = 0;
+            }
+            if (p.y_add > 36864 and p.anim != 3 and p.in_water == 0) {
+                p.anim = 3;
+                p.frame = 0;
+                p.frame_tick = 0;
+                p.image = playerImage(p);
+            }
+        }
+
+        p.frame_tick +%= 1;
+        if (p.frame_tick >= playerAnimTicks(p.anim, p.frame)) {
+            p.frame +%= 1;
+            if (p.frame >= playerAnimFrames(p.anim)) {
+                if (p.anim != 6) {
+                    p.frame = playerAnimRestart(p.anim);
+                } else {
+                    position_player(@intCast(c1));
+                }
+            }
+            p.frame_tick = 0;
+        }
+        p.image = playerImage(p);
+    }
+}
+
+/// The spring-contact objects[] scan (main.c:2232-2259): restart the
+/// OBJ_SPRING object sitting in the tile the player's foot landed on —
+/// middle foot probe first, then either outer probe. The C compares the
+/// object's 16-px tile (x >> 20) against the pixel probe's tile (s >> 4).
+fn springAnimation(s1: Fixed, s2: Fixed) void {
+    for (&objects) |*o| {
+        if (o.used == 1 and o.type == obj_spring) {
+            if (banTile(s1 + 8, s2 + 15) == ban_spring) {
+                if (fixed16.shr20(o.x) == (s1 + 8) >> 4 and fixed16.shr20(o.y) == (s2 + 15) >> 4) {
+                    resetSpringObject(o);
+                    return;
+                }
+            } else {
+                if (banTile(s1, s2 + 15) == ban_spring) {
+                    if (fixed16.shr20(o.x) == s1 >> 4 and fixed16.shr20(o.y) == (s2 + 15) >> 4) {
+                        resetSpringObject(o);
+                        return;
+                    }
+                } else if (banTile(s1 + 15, s2 + 15) == ban_spring) {
+                    if (fixed16.shr20(o.x) == (s1 + 15) >> 4 and fixed16.shr20(o.y) == (s2 + 15) >> 4) {
+                        resetSpringObject(o);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn resetSpringObject(o: *Object) void {
+    o.frame = 0;
+    o.ticks = objectAnimRow(o.anim)[0].ticks;
+    o.image = objectAnimRow(o.anim)[0].image;
+}
+
+/// position_player (main.c:2363): pick a random void tile with solid or ice
+/// under it, far enough from the other enabled players, and drop the player
+/// there. Exported under the C name; steer_players' anim-6 reset path calls
+/// it directly.
+pub export fn position_player(player_num: c_int) void {
+    const pn: usize = @intCast(player_num);
+    while (true) {
+        var s1: c_int = 0;
+        var s2: c_int = 0;
+        while (true) {
+            s1 = @intCast(rnd(22));
+            s2 = @intCast(rnd(16));
+            if (banMapCell(s2, s1) == ban_void and
+                (banMapCell(s2 + 1, s1) == ban_solid or banMapCell(s2 + 1, s1) == ban_ice)) break;
+        }
+        var c1: usize = 0;
+        while (c1 < max_players) : (c1 += 1) {
+            if (c1 != pn and player[c1].enabled == 1) {
+                // abs() over the C's int differences: wrapping subtract,
+                // magnitude taken without @abs's INT_MIN trap.
+                if (cAbs((s1 << 4) -% fixed16.shr16(player[c1].x)) < 32 and
+                    cAbs((s2 << 4) -% fixed16.shr16(player[c1].y)) < 32) break;
+            }
+        }
+        if (c1 == max_players) {
+            const p = &player[pn];
+            // (long) s << 20 truncated back into the int field: a wrapping
+            // 32-bit shift, like fixed16's shl helpers.
+            p.x = @bitCast(@as(u32, @bitCast(s1)) << 20);
+            p.y = @bitCast(@as(u32, @bitCast(s2)) << 20);
+            p.x_add = 0;
+            p.y_add = 0;
+            p.direction = 0;
+            p.jump_ready = 1;
+            p.in_water = 0;
+            p.anim = 0;
+            p.frame = 0;
+            p.frame_tick = 0;
+            p.image = player_anims[0].frame[0].image;
+
+            // main.c:2393-2400 — dead_flag resets under is_server (the
+            // serverSendAlive() inside the same C block additionally needs
+            // is_net, which nothing headless sets).
+            if (is_server != 0) {
+                p.dead_flag = 0;
+            }
+            break;
+        }
+    }
+}
+
+/// is_server (main.c:261) — gates position_player's dead_flag reset
+/// (main.c:2393-2400; serverSendAlive() inside the same C block also needs
+/// is_net, which nothing headless sets). Bound at link time like the world
+/// arrays: the net layer (TASK-011.05+/game-loop) owns the real storage
+/// where the -net startup flag is parsed; the difftest and the unit-test
+/// link publish it = 1 (the headless server path).
+extern var is_server: c_int;
+
+/// The C's abs(int). Inputs are tile/pixel differences well inside the
+/// range, so the 64-bit round trip never changes the value; it only keeps
+/// Zig from trapping at INT_MIN.
+inline fn cAbs(v: c_int) u31 {
+    const w: i64 = v;
+    return @intCast(if (w < 0) -w else w);
+}
+
+/// add_object (main.c:2408) — the first-free-slot allocator steer_players()
+/// reaches through for splash/smoke spawns. Owned here for now (TASK-011.04
+/// grows the particles port from it); exported under the C name so other
+/// modules reach it via extern fn instead of @import.
+pub export fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: c_int, anim: c_int, frame: c_int) void {
+    for (&objects) |*o| {
+        if (o.used == 0) {
+            o.used = 1;
+            o.type = type_;
+            o.x = fixed16.shl16(x);
+            o.y = fixed16.shl16(y);
+            o.x_add = x_add;
+            o.y_add = y_add;
+            o.x_acc = 0;
+            o.y_acc = 0;
+            o.anim = anim;
+            o.frame = frame;
+            o.ticks = objectAnimRow(anim)[@as(u32, @bitCast(frame))].ticks;
+            o.image = objectAnimRow(anim)[@as(u32, @bitCast(frame))].image;
+            return;
+        }
+    }
+}
+
+inline fn objectAnimRow(anim: c_int) *const [10]AnimFrame {
+    const rows = @as([*]const ObjectAnim, @ptrCast(&object_anims));
+    return &rows[@as(u32, @bitCast(anim))].frame;
+}
+
+/// rnd (core/rnd.zig) — reached through the cross-module extern-fn pattern
+/// (playbook: no @import between ported modules). Linked, never @imported:
+/// the difftest/abi/game-loop compilations resolve it against core/rnd.zig's
+/// exported rnd (sharing libc's rand() state and rnd_call_count with the C
+/// reference); this module's standalone unit-test compilation (it is in
+/// build.zig's unit_test_files list) has nothing to resolve it against, so
+/// the Tier-A tests below drive the one function that reaches it —
+/// position_player — through the C reference instead (rnd_c_ref is linked
+/// into every unit-test module, see core/build.zig).
+extern fn rnd(max: c_ushort) c_ushort;
+
+const sfx_jump: c_int = 1; // SFX_JUMP
+const sfx_spring: c_int = 2; // SFX_SPRING
+const sfx_splash: c_int = 3; // SFX_SPLASH
+const sfx_jump_freq: c_int = 15000; // SFX_JUMP_FREQ
+const sfx_spring_freq: c_int = 15000; // SFX_SPRING_FREQ
+const sfx_splash_freq: c_int = 12000; // SFX_SPLASH_FREQ
+
+/// The dj_play_sfx() call sites: evaluate the C's frequency argument
+/// expression — (unsigned short)(SFX_x_FREQ + rnd(2000) - cut), including
+/// its checksummed rnd(2000) draw — then drop everything. The TASK-011.07
+/// pump turns the dropped value into an sfx event; the legacy binary keeps
+/// main.c's own dj_play_sfx.
+inline fn sfxAt(id: c_int, freq_base: c_int, cut: c_int) void {
+    const freq: c_ushort = @truncate(@as(c_uint, @bitCast(fixed16.add(freq_base, rnd(2000)) -% cut)));
+    sfxDrop(id, freq);
+}
+
+// SFX event streams, recorded per-tick by both sides (the C side via the
+// harness's dj_play_sfx export, the Zig side via sfxDrop) so the differential
+// compares the *evaluated* frequency arguments, not just the rnd() draws
+// that feed them. id*100000+freq keeps the pair in one slot.
+pub var sfx_trace_c: [64]c_int = .{0} ** 64;
+pub var sfx_trace_z: [64]c_int = .{0} ** 64;
+var sfx_n_c: usize = 0;
+var sfx_n_z: usize = 0;
+pub fn sfxRecordC(id: c_int, freq: c_int) void {
+    if (sfx_n_c < sfx_trace_c.len) sfx_trace_c[sfx_n_c] = id * 100000 + freq;
+    sfx_n_c += 1;
+}
+pub fn sfxReset() void {
+    sfx_n_c = 0;
+    sfx_n_z = 0;
+}
+pub fn sfxCountC() usize { return sfx_n_c; }
+pub fn sfxCountZ() usize { return sfx_n_z; }
+fn sfxDrop(id: c_int, freq: c_ushort) void {
+    if (sfx_n_z < sfx_trace_z.len) sfx_trace_z[sfx_n_z] = id * 100000 + @as(c_int, freq);
+    sfx_n_z += 1;
+}
+
+inline fn banMapCell(row: c_int, col: c_int) u32 {
+    const flat = @as([*]const u32, @ptrCast(&ban_map));
+    const idx: i64 = @as(i64, @as(i32, @bitCast(row))) * @as(i64, world.ban_cols) +% @as(i64, @as(i32, @bitCast(col)));
+    return flat[@as(u64, @bitCast(idx))];
+}
+
+// ---------------------------------------------------------------------------
+// Tier-A unit tests.
+//
+// They run against the module's own exported storage — the same variables
+// the difftest drives — so no test-owned arena is needed (and none would
+// be possible: the storage is single-instance by design).
+// ---------------------------------------------------------------------------
+
+test "world storage mirrors the canonical layout and cold-start state" {
+    try std.testing.expectEqual(@as(usize, 4), player.len);
+    try std.testing.expectEqual(@as(usize, 200), objects.len);
+    try std.testing.expectEqual(@as(u32, 1), ban_map[16][0]); // force-filled floor
+    try std.testing.expectEqual(@as(u32, 2), ban_map[14][0]); // water row
+    try std.testing.expectEqual(@as(u32, 3), ban_map[9][12]); // ice tile
+}
+
+test "position_player lands on a void tile with ground beneath" {
+    player_anims = @import("std").mem.zeroes([7]PlayerAnim);
+    player_anims[0] = .{ .num_frames = 1, .restart_frame = 0, .frame = .{ .{ .image = 0, .ticks = 0x7fff }, .{}, .{}, .{} } };
+    for (&player) |*p| p.* = .{};
+    player[0].enabled = 1;
+
+    position_player(0);
+    const px: usize = @intCast(@as(i32, @bitCast(player[0].x)) >> 20);
+    const py: usize = @intCast(@as(i32, @bitCast(player[0].y)) >> 20);
+    try std.testing.expectEqual(@as(u32, ban_void), ban_map[py][px]);
+    try std.testing.expect(ban_map[py + 1][px] == ban_solid or ban_map[py + 1][px] == ban_ice);
+    try std.testing.expectEqual(@as(c_int, 0), player[0].x_add);
+    try std.testing.expectEqual(@as(c_int, 1), player[0].jump_ready);
+}
+
+test "steer_players leaves a disabled player untouched" {
+    for (&player) |*p| p.* = .{};
+    player[0].enabled = 0;
+    player[0].x = 12345;
+
+    steer_players();
+    try std.testing.expectEqual(@as(c_int, 12345), player[0].x);
+}

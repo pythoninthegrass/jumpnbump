@@ -34,6 +34,27 @@ All parameters are optional except the task itself.
   agent CLIs run their own internal tool-call loop, so `ttl` alone already
   bounds those; omit this unless you specifically want turn-level control.
 
+## Configuration
+
+`scripts/gnhf.py`'s defaults below can be overridden per machine without
+editing the script: set the env var directly, or copy `.env.example` to
+`.env` in this same directory and edit values there (the file is resolved
+relative to the script, not the caller's cwd, and is gitignored). A CLI
+flag always wins over either.
+
+| Env var | Default | Mode |
+| --- | --- | --- |
+| `GNHF_PROVIDER` | unset | smoke-test |
+| `GNHF_MODEL` | unset | smoke-test |
+| `GNHF_TIMEOUT` | `300` | smoke-test |
+| `GNHF_MAX_RETRIES` | `2` | smoke-test |
+| `GNHF_TTL` | `10800` | launch |
+| `GNHF_PROBE` | `25` | launch |
+| `GNHF_BASE_BACKOFF` | `75` | launch |
+| `GNHF_MAX_BACKOFF` | `900` | launch |
+| `GNHF_MAX_429` | `6` | launch |
+| `GNHF_TOTAL_BACKOFF_CAP` | `2700` | launch |
+
 ## Example
 
 ```text
@@ -46,6 +67,9 @@ resolution, no turn limit.
 ## What happens after
 
 The skill reports back one of: `DONE` (reviewed, pushed, and merged),
-`BAILED` (blocked, nothing pushed), TTL-expired, or killed for thrashing —
-along with the worktree and log paths for manual review. See
-[SKILL.md](SKILL.md) steps 6-7 for the monitoring and finish protocol.
+`BAILED` (blocked, nothing pushed), `RATE_LIMITED` or `EARLY_EXIT` (the task
+never got a turn — a launch that died on gateway contention or a real
+dispatch failure, not an outcome of the task itself), TTL-expired, or killed
+for thrashing — along with the worktree and log paths for manual review. See
+[SKILL.md](SKILL.md) steps 5-7 for the launch, monitoring, and finish
+protocol.

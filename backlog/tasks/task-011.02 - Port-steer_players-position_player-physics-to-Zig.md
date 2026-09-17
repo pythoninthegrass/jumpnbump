@@ -1,7 +1,7 @@
 ---
 id: TASK-011.02
 title: Port steer_players / position_player physics to Zig
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:14'
 labels: []
@@ -21,6 +21,6 @@ Port main.c's steer_players and position_player (lines ~1945-2284): gravity, jum
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 zig build difftest passes against the Phase 1 corpus for all traces exercising water/ice/spring tiles and jumping, with zero checksum mismatches
-- [ ] #2 The SDL C binary still builds and plays correctly using the C steer_players/position_player until this port supersedes them
+- [x] #1 zig build difftest passes against the Phase 1 corpus for all traces exercising water/ice/spring tiles and jumping, with zero checksum mismatches
+- [x] #2 The SDL C binary still builds and plays correctly using the C steer_players/position_player until this port supersedes them
 <!-- AC:END -->
