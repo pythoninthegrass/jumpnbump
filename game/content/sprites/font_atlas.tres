@@ -1,0 +1,328 @@
+[gd_resource type="Resource" load_steps=82 format=3]
+
+[ext_resource type="Texture2D" path="res://content/sprites/font_atlas.png" id="1"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_0"]
+atlas = ExtResource("1")
+region = Rect2(0, 0, 4, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_1"]
+atlas = ExtResource("1")
+region = Rect2(14, 0, 5, 4)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_2"]
+atlas = ExtResource("1")
+region = Rect2(28, 0, 3, 4)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_3"]
+atlas = ExtResource("1")
+region = Rect2(42, 0, 5, 12)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_4"]
+atlas = ExtResource("1")
+region = Rect2(56, 0, 6, 12)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_5"]
+atlas = ExtResource("1")
+region = Rect2(70, 0, 3, 5)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_6"]
+atlas = ExtResource("1")
+region = Rect2(84, 0, 5, 3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_7"]
+atlas = ExtResource("1")
+region = Rect2(98, 0, 3, 3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_8"]
+atlas = ExtResource("1")
+region = Rect2(112, 0, 6, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_9"]
+atlas = ExtResource("1")
+region = Rect2(126, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_10"]
+atlas = ExtResource("1")
+region = Rect2(140, 0, 5, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_11"]
+atlas = ExtResource("1")
+region = Rect2(154, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_12"]
+atlas = ExtResource("1")
+region = Rect2(168, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_13"]
+atlas = ExtResource("1")
+region = Rect2(182, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_14"]
+atlas = ExtResource("1")
+region = Rect2(196, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_15"]
+atlas = ExtResource("1")
+region = Rect2(210, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_16"]
+atlas = ExtResource("1")
+region = Rect2(224, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_17"]
+atlas = ExtResource("1")
+region = Rect2(238, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_18"]
+atlas = ExtResource("1")
+region = Rect2(252, 0, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_19"]
+atlas = ExtResource("1")
+region = Rect2(266, 0, 4, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_20"]
+atlas = ExtResource("1")
+region = Rect2(280, 0, 4, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_21"]
+atlas = ExtResource("1")
+region = Rect2(294, 0, 12, 11)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_22"]
+atlas = ExtResource("1")
+region = Rect2(308, 0, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_23"]
+atlas = ExtResource("1")
+region = Rect2(322, 0, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_24"]
+atlas = ExtResource("1")
+region = Rect2(336, 0, 9, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_25"]
+atlas = ExtResource("1")
+region = Rect2(350, 0, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_26"]
+atlas = ExtResource("1")
+region = Rect2(364, 0, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_27"]
+atlas = ExtResource("1")
+region = Rect2(378, 0, 8, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_28"]
+atlas = ExtResource("1")
+region = Rect2(0, 14, 9, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_29"]
+atlas = ExtResource("1")
+region = Rect2(14, 14, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_30"]
+atlas = ExtResource("1")
+region = Rect2(28, 14, 4, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_31"]
+atlas = ExtResource("1")
+region = Rect2(42, 14, 8, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_32"]
+atlas = ExtResource("1")
+region = Rect2(56, 14, 10, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_33"]
+atlas = ExtResource("1")
+region = Rect2(70, 14, 7, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_34"]
+atlas = ExtResource("1")
+region = Rect2(84, 14, 11, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_35"]
+atlas = ExtResource("1")
+region = Rect2(98, 14, 10, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_36"]
+atlas = ExtResource("1")
+region = Rect2(112, 14, 9, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_37"]
+atlas = ExtResource("1")
+region = Rect2(126, 14, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_38"]
+atlas = ExtResource("1")
+region = Rect2(140, 14, 9, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_39"]
+atlas = ExtResource("1")
+region = Rect2(154, 14, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_40"]
+atlas = ExtResource("1")
+region = Rect2(168, 14, 8, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_41"]
+atlas = ExtResource("1")
+region = Rect2(182, 14, 8, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_42"]
+atlas = ExtResource("1")
+region = Rect2(196, 14, 9, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_43"]
+atlas = ExtResource("1")
+region = Rect2(210, 14, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_44"]
+atlas = ExtResource("1")
+region = Rect2(224, 14, 12, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_45"]
+atlas = ExtResource("1")
+region = Rect2(238, 14, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_46"]
+atlas = ExtResource("1")
+region = Rect2(252, 14, 8, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_47"]
+atlas = ExtResource("1")
+region = Rect2(266, 14, 9, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_48"]
+atlas = ExtResource("1")
+region = Rect2(280, 14, 7, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_49"]
+atlas = ExtResource("1")
+region = Rect2(294, 14, 8, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_50"]
+atlas = ExtResource("1")
+region = Rect2(308, 14, 6, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_51"]
+atlas = ExtResource("1")
+region = Rect2(322, 14, 8, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_52"]
+atlas = ExtResource("1")
+region = Rect2(336, 14, 7, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_53"]
+atlas = ExtResource("1")
+region = Rect2(350, 14, 5, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_54"]
+atlas = ExtResource("1")
+region = Rect2(364, 14, 8, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_55"]
+atlas = ExtResource("1")
+region = Rect2(378, 14, 7, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_56"]
+atlas = ExtResource("1")
+region = Rect2(0, 28, 4, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_57"]
+atlas = ExtResource("1")
+region = Rect2(14, 28, 5, 12)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_58"]
+atlas = ExtResource("1")
+region = Rect2(28, 28, 8, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_59"]
+atlas = ExtResource("1")
+region = Rect2(42, 28, 4, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_60"]
+atlas = ExtResource("1")
+region = Rect2(56, 28, 11, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_61"]
+atlas = ExtResource("1")
+region = Rect2(70, 28, 8, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_62"]
+atlas = ExtResource("1")
+region = Rect2(84, 28, 7, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_63"]
+atlas = ExtResource("1")
+region = Rect2(98, 28, 8, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_64"]
+atlas = ExtResource("1")
+region = Rect2(112, 28, 8, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_65"]
+atlas = ExtResource("1")
+region = Rect2(126, 28, 6, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_66"]
+atlas = ExtResource("1")
+region = Rect2(140, 28, 7, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_67"]
+atlas = ExtResource("1")
+region = Rect2(154, 28, 5, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_68"]
+atlas = ExtResource("1")
+region = Rect2(168, 28, 7, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_69"]
+atlas = ExtResource("1")
+region = Rect2(182, 28, 7, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_70"]
+atlas = ExtResource("1")
+region = Rect2(196, 28, 10, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_71"]
+atlas = ExtResource("1")
+region = Rect2(210, 28, 8, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_72"]
+atlas = ExtResource("1")
+region = Rect2(224, 28, 8, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_73"]
+atlas = ExtResource("1")
+region = Rect2(238, 28, 7, 7)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_74"]
+atlas = ExtResource("1")
+region = Rect2(252, 28, 6, 3)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_75"]
+atlas = ExtResource("1")
+region = Rect2(266, 28, 7, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_76"]
+atlas = ExtResource("1")
+region = Rect2(280, 28, 7, 10)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_77"]
+atlas = ExtResource("1")
+region = Rect2(294, 28, 9, 11)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_78"]
+atlas = ExtResource("1")
+region = Rect2(308, 28, 9, 11)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_79"]
+atlas = ExtResource("1")
+region = Rect2(322, 28, 7, 9)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_font_80"]
+atlas = ExtResource("1")
+region = Rect2(336, 28, 9, 11)
+

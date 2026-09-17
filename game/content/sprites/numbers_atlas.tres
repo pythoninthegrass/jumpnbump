@@ -1,0 +1,44 @@
+[gd_resource type="Resource" load_steps=11 format=3]
+
+[ext_resource type="Texture2D" path="res://content/sprites/numbers_atlas.png" id="1"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_0"]
+atlas = ExtResource("1")
+region = Rect2(0, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_1"]
+atlas = ExtResource("1")
+region = Rect2(18, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_2"]
+atlas = ExtResource("1")
+region = Rect2(36, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_3"]
+atlas = ExtResource("1")
+region = Rect2(54, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_4"]
+atlas = ExtResource("1")
+region = Rect2(72, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_5"]
+atlas = ExtResource("1")
+region = Rect2(90, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_6"]
+atlas = ExtResource("1")
+region = Rect2(108, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_7"]
+atlas = ExtResource("1")
+region = Rect2(126, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_8"]
+atlas = ExtResource("1")
+region = Rect2(144, 0, 16, 22)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_numbers_9"]
+atlas = ExtResource("1")
+region = Rect2(162, 0, 16, 22)
+

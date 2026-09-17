@@ -18,6 +18,7 @@ env:
 # here as Phase 2+ adds those builds; do not list files that don't exist yet.
 includes:
   ci: taskfiles/ci.yml
+  assets: taskfiles/assets.yml
 
 tasks:
   default:
@@ -26,6 +27,7 @@ tasks:
       - task --list
 
   check:
-    desc: "The one documented build/test command (currently the legacy make build)"
+    desc: "The one documented build/test command (legacy make build + the asset pipeline's reproducibility gates)"
     cmds:
       - make
+      - task: assets:check

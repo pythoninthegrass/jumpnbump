@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# TASK-013: the Godot asset pipeline. Each render/check pair mirrors
+# ~/git/neo_snake's tools/render_audio.py --check convention -- render
+# writes game/content/, check regenerates into a temp dir and diffs.
+
+tasks:
+  sprites:render:
+    desc: "Render rabbit/objects/numbers/font.gob into PNG sprite atlases + AtlasTexture .tres (TASK-013.01)"
+    cmds:
+      - uv run tools/build_sprite_atlas.py --all
+
+  sprites:check:
+    desc: "Verify the committed sprite atlases match a fresh render byte-for-byte"
+    cmds:
+      - uv run tools/build_sprite_atlas.py --all --check
+
+  check:
+    desc: "All asset-pipeline reproducibility gates that are portable across CI platforms"
+    cmds:
+      - task: sprites:check

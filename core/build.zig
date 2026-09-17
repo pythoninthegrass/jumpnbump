@@ -27,6 +27,7 @@ const cli_tools = [_]struct { name: []const u8, file: []const u8 }{
     .{ .name = "jnbpack", .file = "jnbpack_cli.zig" },
     .{ .name = "jnbunpack", .file = "jnbunpack_cli.zig" },
     .{ .name = "gobpack", .file = "gobpack_cli.zig" },
+    .{ .name = "asset-dump", .file = "asset_dump_cli.zig" },
 };
 
 fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
