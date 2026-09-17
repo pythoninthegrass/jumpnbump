@@ -11,11 +11,12 @@
 //
 // rnd() and the audio boundary follow the playbook's cross-module rules:
 // rnd() is reached as an extern fn (rnd.zig owns the definition; no
-// @import between ported modules), and dj_set_sfx_channel_volume is
-// declared but never defined in core — it is the one audio call inside the
-// swarm's tick, kept as a link-boundary symbol so the simulation itself
-// carries no audio implementation (docs/porting-playbook.md "Core
-// purity"); the difftest harness links a capture stub instead.
+// @import between ported modules). dj_set_sfx_channel_volume has no home in
+// core — the simulation carries no audio implementation
+// (docs/porting-playbook.md "Core purity", TASK-011.08) — so the one audio
+// call inside the swarm's tick is recorded into a plain data slot instead
+// (volume_trace_channel/volume_trace_volume below); core/game_loop.zig's
+// step() drains it into the `.sfx_volume` event stream once per tick.
 const std = @import("std");
 const c = @cImport({
     @cInclude("stdlib.h");
@@ -97,7 +98,23 @@ extern fn rnd(max: u16) u16;
 
 /// dj_set_sfx_channel_volume — audio boundary, see the header comment. The
 /// fly swarm sound lives on channel 4 (main.c:1382's caller context).
-extern fn dj_set_sfx_channel_volume(channel: c_int, volume: i8) void;
+pub var volume_trace_channel: c_int = -1;
+pub var volume_trace_volume: i8 = 0;
+var volume_trace_set: bool = false;
+
+fn setSfxVolume(channel: c_int, volume: i8) void {
+    volume_trace_channel = channel;
+    volume_trace_volume = volume;
+    volume_trace_set = true;
+}
+/// Whether update_flies() set the swarm's channel volume this tick
+/// (main.c only does this once, when update_count == 1).
+pub fn volumeWasSetZ() bool {
+    return volume_trace_set;
+}
+pub fn volumeResetZ() void {
+    volume_trace_set = false;
+}
 
 /// GET_BAN_MAP_XY(x,y) (main.c:94) — the 16-pixel tile under a pixel
 /// coordinate. C's `>>` on the signed coordinates floors toward -1, which
@@ -184,7 +201,7 @@ pub export fn update_flies(update_count: c_int) void {
         // clamp to zero rides on the same temporary the C reuses.
         var s3: c_int = 32 -% @divTrunc(dist, 3);
         if (s3 < 0) s3 = 0;
-        dj_set_sfx_channel_volume(4, @truncate(s3));
+        setSfxVolume(4, @truncate(s3));
     }
 
     c1 = 0;
@@ -300,30 +317,6 @@ const default_ban_map = [ban_rows][ban_cols]c_uint{
 
 const testing = std.testing;
 
-// Unit-test storage for the audio-boundary capture stub. player_raw/
-// ban_map_raw's own weak fallback moved to core/unit_flies_globals.zig
-// (TASK-011.07): baked in here, they collided at compile time with
-// core/steer.zig's identical weak fallback the moment something (core/
-// game_loop.zig) @imports both modules together -- Zig treats two weak
-// Zig-level exports of the same name as an error regardless of whether an
-// external strong definition (core/c_ref/sim_harness.c) would otherwise
-// resolve it. Extracting to an opt-in file, linked only for this module's
-// own standalone Tier-A test (core/build.zig's addTestStep), is the same
-// arrangement core/objects.zig/core/unit_objects_globals.zig already use.
-var test_sfx_channel: c_int = -1;
-var test_sfx_volume: i8 = 0;
-var test_sfx_calls: u32 = 0;
-
-comptime {
-    @export(&test_dj_set_sfx_channel_volume, .{ .name = "dj_set_sfx_channel_volume", .linkage = .weak });
-}
-
-fn test_dj_set_sfx_channel_volume(channel: c_int, volume: i8) callconv(.c) void {
-    test_sfx_channel = channel;
-    test_sfx_volume = volume;
-    test_sfx_calls +%= 1;
-}
-
 test "isqrtFloor truncates sqrt exactly over the reachable distance range" {
     // get_closest_player_to_point's largest argument: dx and dy up to
     // 359+8 (a fly at one playfield corner, the reference point at the
@@ -348,9 +341,9 @@ fn resetSwarm(x0: c_int, y0: c_int) void {
     ban_map_ptr.* = default_ban_map;
     lord_of_the_flies = 0;
     player_ptr.* = [_]Player{.{}} ** 4;
-    test_sfx_channel = -1;
-    test_sfx_volume = 0;
-    test_sfx_calls = 0;
+    volume_trace_channel = -1;
+    volume_trace_volume = 0;
+    volumeResetZ();
     for (&flies) |*fly| {
         fly.* = .{};
         fly.x = x0;

@@ -1,7 +1,7 @@
 ---
 id: TASK-011.08
 title: 'Enforce core purity: no presentation or audio symbols, no libc I/O in the sim'
-status: Blocked
+status: Done
 assignee: []
 created_date: '2026-09-15 19:15'
 labels: []
@@ -22,7 +22,7 @@ Add a build-time or CI check (following neo_snake's tools/validate_audio_boundar
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A CI-wired check greps or symbol-scans core/ and fails on any presentation or audio symbol reference from the sim module
-- [ ] #2 The check passes on the completed Phase 3 core — **cannot pass as written; see Blocked**
+- [x] #2 The check passes on the completed Phase 3 core
 - [x] #3 The check is documented in docs/porting-playbook.md as a standing rule for future changes
 <!-- AC:END -->
 
@@ -62,43 +62,51 @@ alternation, and Zig's `std.fs.cwd()` never has `(` after the name. `zig build t
 `core/c_ref/` (the extracted C oracle) and `.zig-cache`/`zig-out` are excluded; `--sim-only`
 narrows to the simulation modules and skips `*_difftest.zig` / `unit_*.zig`.
 
-## Blocked
+## AC#2 resolution
 
-**AC#2 cannot be satisfied by this task alone.** The check finds real audio and presentation
-calls in two already-merged simulation modules, and they are load-bearing, not leftovers.
-Measured on the unmodified base commit `c48882d` (so this is pre-existing, not introduced
-here) — 28 findings over all of `core/`, 14 of them in sim modules:
+The unattended first pass correctly bailed here rather than force a false pass: it found real,
+load-bearing `add_pob`/`add_leftovers` calls in `core/objects.zig` and a real
+`dj_set_sfx_channel_volume` call in `core/flies.zig`, both pre-existing on base commit
+`c48882d`, and correctly identified that removing them outright would silently drop the
+`objects_difftest.zig` draw-stream comparison that is the *only* thing making the
+`TASK-011.04` octant/atan2 replacement observable. That finding was accurate; resolving it
+required a design decision (extend the `TASK-011.07` event stream with draw/volume classes)
+that was out of this task's original "don't touch `core/`" brief, so it stopped and reported
+rather than guessing. Decision made: extend the event stream.
 
-- `core/objects.zig:99,100` declare `extern fn add_pob`/`add_leftovers`; called at 226, 240,
-  256, 284, 301, 431, 432, 456, 459 — the C's draw call sites.
-- `core/flies.zig:100` declares `extern fn dj_set_sfx_channel_volume`; called at 187 (the fly
-  swarm volume), with a weak capture stub at 318.
+**core/objects.zig**: removed the `extern fn add_pob`/`add_leftovers` declarations and their
+nine call sites entirely. Added a `draw_trace_z`/`drawDrop()`/`drawCountZ()`/`drawResetZ()`
+plain-data trace — the same `sfx_trace_z` pattern `core/steer.zig` already uses for
+`dj_play_sfx` — recording `(kind, x, y, image)` per draw instead of calling anything.
 
-These are calls, not comments, so they are genuine violations of the rule AC#2 asserts is
-already met. Two facts make them a design question rather than a deletion:
+**core/flies.zig**: removed the `extern fn dj_set_sfx_channel_volume` declaration, its one
+call site, and the now-pointless weak capture stub (nothing in `flies_difftest.zig` ever
+compared it — the stub existed purely to satisfy the linker). Added
+`volume_trace_channel`/`volume_trace_volume`/`volumeWasSetZ()`/`volumeResetZ()`.
 
-1. **They carry verification coverage.** `objects_difftest.zig:215` `compareDraws()` fails a
-   tick on any differing captured `(kind,x,y,image)`, and that is the *only* thing that makes
-   the `TASK-011.04` octant/atan2 replacement observable; `steer_difftest.zig:152` /
-   `collision_difftest.zig:105`'s `dj_play_sfx` sinks are what `compareSfx()` compares. The
-   `TASK-011.07` event stream classifies sfx and object spawns but emits no draw events, so
-   dropping the `add_pob` calls would silently lose the fur-rotation check.
-2. **Deleting them does not obviously lose parity** — `game_loop.zig:10-13` already argues the
-   pob/page bookkeeping is never checksummed and never feeds back — but settling that needs
-   the corpus rerun, and the draw-stream comparison argues the other way for the fur frame.
+**core/game_loop.zig**: added `EventKind.draw`/`.sfx_volume` and a fourth `GameEvent.d` payload
+field (three wasn't enough for `add_leftovers`' which/x/y/frame). `step()` now drains
+`objects.draw_trace_z` into `.draw` events and `flies.volumeWasSetZ()` into one `.sfx_volume`
+event per tick, resetting both traces after.
 
-Resolving it means editing `core/objects.zig`, `core/flies.zig` and their difftests, which
-this task's brief explicitly puts out of scope ("do not touch any file under `core/`"; a real
-violation in merged core is a report, not a side-effect patch). `--sim-only` and the default
-scan therefore both exit 1 today, and the pre-commit hook blocks commits until then.
+**core/objects_difftest.zig**: `compareDraws()`'s Zig-side capture used to come from a shared
+`add_pob`/`add_leftovers` export both sides called; now only the C reference calls those (real,
+unrenamed, extracted verbatim from `main.c` — captured exactly as before), and the Zig side is
+read straight from `objects.draw_trace_z` after each run. The comparison itself, and its
+`(kind, x, y, image)` shape, is unchanged — the octant/fur-rotation coverage this was about
+protecting is intact.
 
-Suggested follow-up (one decision, then mechanical): decide whether the port needs a
-`draw`/`sprite_frame` event class in the `TASK-011.07` stream. If yes, emit draw events from
-`update_objects()` and replace the `add_pob` externs with event pushes, and route the fly
-volume the same way — after which AC#2 and this gate go green together. If no, the draw-stream
-comparison in `objects_difftest.zig` needs an explicit rationale for what coverage is given up.
+`.pre-commit-config.yaml`'s hook now runs `--sim-only` (the actual production-core gate) rather
+than the unfiltered scan, since `*_difftest.zig`/`unit_*.zig` legitimately name the real C
+functions they compare the port against or link stub definitions for — that was always the
+tool's own documented design (see its `--sim-only` help text and this task's Implementation
+Notes above), just not how the hook was wired on the first pass.
 
-Honest state of the gates: `zig build test` passes (161/162 tests, 1 pre-existing
-`game_loop_difftest` failure — `data/jumpbump.dat` is git-ignored and not built in this
-worktree, so `dat.loadDatafile` gets `FileNotFound`). The new check is wired and running; it
-is red because the thing it checks for is actually there.
+Verified: `zig build test`/`difftest`/`abi`/`abitest` all pass; legacy `make` build succeeds;
+all 10 corpus traces produce zero checksum mismatches against a freshly built
+`jumpnbump -headless` binary (draw/volume side effects never fed the checksum, so none of this
+could have changed simulation behavior — confirmed, not assumed); `--sim-only` scan is clean
+(0 findings, was 14); `prek run validate-simulation-boundary`/`-selftest` both pass. Manually
+verified `.draw`/`.sfx_volume` events actually fire (spring/butterfly draws every tick, one
+volume event per tick) by temporarily instrumenting `game_loop_difftest.zig` against the
+`07-spring-bounce` corpus trace, then removing the instrumentation before commit.

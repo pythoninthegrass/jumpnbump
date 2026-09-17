@@ -40,7 +40,7 @@ zig fmt --check .      # every ported .zig file
 ## Verification tiers
 
 | Tier | Command | Proves | Required when |
-|------|---------|--------|----------------|
+| ------ | --------- | -------- | ---------------- |
 | A | `zig build test` | The ported module's own unit tests pass | Every port, from the first line of `core/<name>.zig` |
 | B | `zig build difftest` | The port is behaviorally identical to the pre-port `.c`, replayed over the TASK-008 corpus, checksum-per-frame | Every Phase 3 (`TASK-011.*`) subtask, before the next subtask begins (`TASK-011` AC#3) |
 | C | `zig build abitest` | The frozen `include/jumpnbump.h` surface and `core/abi.zig`'s exports stay in lockstep, reached only via `@cImport` | Any change touching `core/abi.zig` or `include/jumpnbump.h` (Phase 4, `TASK-012.*`) |
@@ -102,9 +102,10 @@ rounding as "correct" behavior.
 The Zig simulation core must be a pure, deterministic state machine: no presentation
 concept (pob lists, page flipping, draw calls), no audio symbol, and no libc file I/O
 outside explicitly asset-loading paths. This is enforced by a check —
-`tools/validate_simulation_boundary.py`, wired in as a `pre-commit`/`prek` hook — that
-symbol-scans `core/` and fails on any presentation or audio reference (`TASK-011.08`).
-Treat this as a standing rule for every future change to `core/`, not a one-time gate.
+`tools/validate_simulation_boundary.py --sim-only`, wired in as a `pre-commit`/`prek`
+hook — that symbol-scans the simulation modules and fails on any presentation or audio
+reference (`TASK-011.08`). Treat this as a standing rule for every future change to
+`core/`, not a one-time gate.
 
 **The denylist is concrete API surface, not vocabulary.** It names `dj_play_sfx`,
 `dj_set_*_volume`, `dj_start_mod`, the `Mix_*` functions, `add_pob`, `add_leftovers`,

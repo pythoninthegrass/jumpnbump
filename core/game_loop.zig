@@ -96,17 +96,25 @@ fn applyInputs(inputs: Inputs) void {
     }
 }
 
-/// The event stream (AC#4): sfx triggers, object spawns, player deaths, and
-/// score changes, in the order the tick produces them. `a`/`b`/`c` carry
-/// per-kind payloads (documented at each push() call site below) rather
-/// than a union, matching the fixed-shape event records already
-/// established by core/steer.zig's/core/collision.zig's own sfx traces —
-/// the Godot event consumer (Phase 5) reads one flat record shape.
+/// The event stream (AC#4): sfx triggers, object spawns, player deaths,
+/// score changes, draws, and sfx-channel-volume changes, in the order the
+/// tick produces them. `a`/`b`/`c`/`d` carry per-kind payloads (documented
+/// at each push() call site below) rather than a union, matching the
+/// fixed-shape event records already established by core/steer.zig's/
+/// core/collision.zig's own sfx traces — the Godot event consumer (Phase 5)
+/// reads one flat record shape. `.draw` and `.sfx_volume` exist because
+/// core/objects.zig and core/flies.zig carry no renderer or audio
+/// implementation of their own (docs/porting-playbook.md "Core purity",
+/// TASK-011.08): what the C would have drawn or set the fly-swarm channel
+/// volume to is recorded here as inert data instead, for whatever consumer
+/// (audio, Godot) wants to act on it.
 pub const EventKind = enum(c_int) {
     sfx = 1,
     object_spawn = 2,
     player_death = 3,
     score_change = 4,
+    draw = 5,
+    sfx_volume = 6,
 };
 
 pub const GameEvent = struct {
@@ -114,6 +122,7 @@ pub const GameEvent = struct {
     a: c_int = 0,
     b: c_int = 0,
     c: c_int = 0,
+    d: c_int = 0,
 };
 
 pub const max_events_per_tick = 256;
@@ -213,6 +222,23 @@ pub fn step(state: *State, inputs: Inputs) Events {
         }
         state.prev_used[i] = used_now;
     }
+
+    // draws: core/objects.zig's draw_trace_z carries what update_objects()
+    // would have drawn this tick (main.c's add_pob calls as `.a = 0`,
+    // add_leftovers' pair as `.a = 0`/`.a = 1`), in call order.
+    const draw_count = objects_mod.drawCountZ();
+    for (0..draw_count) |i| {
+        const d = objects_mod.draw_trace_z[i];
+        events.push(.{ .kind = .draw, .a = d.kind, .b = d.a, .c = d.b, .d = d.image });
+    }
+    objects_mod.drawResetZ();
+
+    // fly-swarm channel volume: main.c sets this at most once per tick
+    // (update_flies() only when update_count == 1, always true here).
+    if (flies_enabled != 0 and flies_mod.volumeWasSetZ()) {
+        events.push(.{ .kind = .sfx_volume, .a = flies_mod.volume_trace_channel, .b = flies_mod.volume_trace_volume });
+    }
+    flies_mod.volumeResetZ();
 
     return events;
 }

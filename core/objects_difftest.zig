@@ -24,9 +24,11 @@
 // add_leftovers twice for a settling flesh blob). Those are the only visible
 // outputs that carry the octant math's result — a wrong octant shows up as a
 // wrong `frame + octant` image argument, never as a stored-field difference.
-// So the harness captures every add_pob/add_leftovers call (both sides, via
-// the strong exports below that override objects.zig's weak stubs) and
-// compares the recorded streams alongside the world state.
+// The C reference still calls the real add_pob/add_leftovers (unrenamed,
+// verbatim from main.c), captured by the strong exports below; the Zig side
+// (TASK-011.08) carries no such calls at all — it records into
+// core/objects.zig's own draw_trace_z, which this harness reads directly
+// after each Zig run instead of relying on a shared capture sink.
 //
 // Scenarios are driven directly (not corpus-replayed) because update_objects'
 // inputs are the objects[] slots themselves plus the rnd() stream: the replay
@@ -108,11 +110,12 @@ fn loadObjectAnims() void {
 }
 
 // ---------------------------------------------------------------------------
-// Draw-stream capture. add_pob/add_leftovers are the C reference's (unrenamed)
-// and the Zig module's shared externs; the strong definitions below override
-// objects.zig's weak stubs, so both sides of the differential record into one
-// buffer set. Each side resets the counters before its run; the harness then
-// compares the C run's captured stream against the Zig run's.
+// Draw-stream capture. add_pob/add_leftovers are the C reference's own
+// (unrenamed) calls, extracted verbatim from main.c — the strong exports
+// below are the only definitions of those two symbols in this binary, since
+// the Zig side (TASK-011.08) no longer calls them at all. Zig's own draws
+// are read straight from core/objects.zig's draw_trace_z after each of its
+// runs (see runScenario below), not captured through a shared sink.
 //
 // A fur blob draws frame + octant as `image`; flesh draws frame. Recording the
 // (x, y, image) triple is what makes the octant math observable.
@@ -123,28 +126,17 @@ var draw_z: [8192]DrawEvent = undefined;
 var draw_c: [8192]DrawEvent = undefined;
 var n_z: usize = 0;
 var n_c: usize = 0;
-var capture_c: bool = false;
 
 export fn add_pob(page: ?*anyopaque, x: c_int, y: c_int, image: c_int, gobs: ?*anyopaque) void {
     _ = .{ page, gobs };
-    if (capture_c) {
-        if (n_c < draw_c.len) draw_c[n_c] = .{ .kind = 0, .a = x, .b = y, .image = image };
-        n_c += 1;
-    } else {
-        if (n_z < draw_z.len) draw_z[n_z] = .{ .kind = 0, .a = x, .b = y, .image = image };
-        n_z += 1;
-    }
+    if (n_c < draw_c.len) draw_c[n_c] = .{ .kind = 0, .a = x, .b = y, .image = image };
+    n_c += 1;
 }
 
 export fn add_leftovers(which: c_int, x: c_int, y: c_int, frame: c_int, gobs: ?*anyopaque) void {
     _ = gobs;
-    if (capture_c) {
-        if (n_c < draw_c.len) draw_c[n_c] = .{ .kind = which, .a = x, .b = y, .image = frame };
-        n_c += 1;
-    } else {
-        if (n_z < draw_z.len) draw_z[n_z] = .{ .kind = which, .a = x, .b = y, .image = frame };
-        n_z += 1;
-    }
+    if (n_c < draw_c.len) draw_c[n_c] = .{ .kind = which, .a = x, .b = y, .image = frame };
+    n_c += 1;
 }
 
 /// The C reference's rnd() — same core/rnd.zig call the Zig port makes, so
@@ -288,16 +280,20 @@ fn runScenario(scn: *const Scenario, mismatches: *usize) void {
         // --- C side ---
         rnd_mod.seed(tick_seed);
         n_c = 0;
-        n_z = 0;
-        capture_c = true;
         c_update_objects();
-        capture_c = false;
         const c_result = snapshot();
 
         // --- Zig side: same seed, same starting world ---
         restore(&start);
         rnd_mod.seed(tick_seed);
+        objects.drawResetZ();
         update_objects_entry();
+        n_z = 0;
+        for (0..objects.drawCountZ()) |i| {
+            const d = objects.draw_trace_z[i];
+            if (n_z < draw_z.len) draw_z[n_z] = .{ .kind = d.kind, .a = d.a, .b = d.b, .image = d.image };
+            n_z += 1;
+        }
         compareObjects(scn.name, tick, &c_result, mismatches);
         compareDraws(scn.name, tick, mismatches);
     }

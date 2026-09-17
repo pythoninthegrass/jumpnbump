@@ -13,11 +13,13 @@
 // of any differential share one world.
 //
 // rnd() is reached as an extern fn (rnd.zig owns the definition; no @import
-// between ported modules). add_pob()/add_leftovers() are draw-side boundaries
-// declared but never defined in core — the simulation carries no renderer
-// (docs/porting-playbook.md "Core purity"); the difftest harness links capture
-// sinks instead. Their arguments, and the octant math that feeds add_pob's
-// frame index for OBJ_FUR, still evaluate exactly as the C's do.
+// between ported modules). add_pob()/add_leftovers() have no home in core —
+// the simulation carries no renderer (docs/porting-playbook.md "Core
+// purity", TASK-011.08) — so update_objects() records their arguments into
+// draw_trace_z instead, the same sfx_trace_z-style plain-data trace
+// core/steer.zig uses for dj_play_sfx; core/game_loop.zig's step() drains it
+// into the `.draw` event stream once per tick. The octant math that feeds
+// add_pob's frame index for OBJ_FUR still evaluates exactly as the C's does.
 //
 // Arithmetic: every fixed-point operation routes through core/fixed16.zig's
 // wrapping helpers so Zig's trapping arithmetic and @intCast range checks can
@@ -91,13 +93,33 @@ extern var ban_map_raw: [world.ban_rows][world.ban_cols]u32;
 /// (playbook: no @import between ported modules).
 extern fn rnd(max: c_ushort) c_ushort;
 
-/// add_pob()/add_leftovers() — draw-side boundaries, declared never defined in
-/// core (Core purity). update_objects() calls add_pob once per live object and
-/// add_leftovers twice when a flesh blob settles on solid ground without
-/// bouncing; the harness links capture sinks so the differential can see the
-/// frame indices (which carry the octant math's result) the C would draw.
-extern fn add_pob(page: ?*anyopaque, x: c_int, y: c_int, image: c_int, gobs: ?*anyopaque) void;
-extern fn add_leftovers(which: c_int, x: c_int, y: c_int, frame: c_int, gobs: ?*anyopaque) void;
+/// add_pob()/add_leftovers() (main.c's draw-side calls) have no home in
+/// core — the simulation carries no renderer (docs/porting-playbook.md
+/// "Core purity", TASK-011.08). update_objects() calls the C's add_pob once
+/// per live object and add_leftovers twice when a flesh blob settles on
+/// solid ground without bouncing; both are recorded here into a plain data
+/// trace instead — the same `sfx_trace_z`-style pattern core/steer.zig uses
+/// for dj_play_sfx — so core/game_loop.zig's step() can drain it into the
+/// event stream (`.draw`) after each tick, and core/objects_difftest.zig can
+/// still see the frame indices (which carry the octant math's result) the C
+/// would have drawn.
+pub const DrawRecord = struct { kind: c_int, a: c_int, b: c_int, image: c_int };
+const max_draws_per_tick = num_objects * 2; // one add_pob, or two add_leftovers, per slot
+pub var draw_trace_z: [max_draws_per_tick]DrawRecord = undefined;
+var draw_n_z: usize = 0;
+
+fn drawDrop(kind: c_int, a: c_int, b: c_int, image: c_int) void {
+    if (draw_n_z < draw_trace_z.len) draw_trace_z[draw_n_z] = .{ .kind = kind, .a = a, .b = b, .image = image };
+    draw_n_z += 1;
+}
+/// The draws actually stored (silently truncated past max_draws_per_tick,
+/// like steer.zig's sfx_trace_z).
+pub fn drawCountZ() usize {
+    return @min(draw_n_z, draw_trace_z.len);
+}
+pub fn drawResetZ() void {
+    draw_n_z = 0;
+}
 
 /// add_object (main.c:2408) — first-fit allocator over the 200 slots: the
 /// first slot with used == 0 is taken, initialised, and its ticks/image come
@@ -223,7 +245,7 @@ pub export fn update_objects() void {
                     }
                 }
                 if (o.used == 1)
-                    add_pob(null, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image, null);
+                    drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image);
             },
             obj_splash => {
                 o.ticks -%= 1;
@@ -237,7 +259,7 @@ pub export fn update_objects() void {
                     }
                 }
                 if (o.used == 1)
-                    add_pob(null, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image, null);
+                    drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image);
             },
             obj_smoke => {
                 o.x = fixed16.add(o.x, o.x_add);
@@ -253,7 +275,7 @@ pub export fn update_objects() void {
                     }
                 }
                 if (o.used == 1)
-                    add_pob(null, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image, null);
+                    drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image);
             },
             obj_yel_butfly, obj_pink_butfly => {
                 butterflyStep(o, &s1);
@@ -281,7 +303,7 @@ pub export fn update_objects() void {
                     }
                 }
                 if (o.used == 1)
-                    add_pob(null, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image, null);
+                    drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image);
             },
             obj_fur => furOrFleshStep(o, &s1, false),
             obj_flesh => furOrFleshStep(o, &s1, true),
@@ -298,7 +320,7 @@ pub export fn update_objects() void {
                     }
                 }
                 if (o.used == 1)
-                    add_pob(null, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image, null);
+                    drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y), o.image);
             },
             // The C's switch on objects[].type has no default: any other type
             // value (never produced by add_object, but reachable through the
@@ -428,8 +450,8 @@ fn furOrFleshStep(o: *Object, s1p: *c_int, flesh: bool) void {
                     if (flesh) {
                         if (rnd(100) < 10) {
                             const s1: c_int = @intCast(rnd(4) -% 2);
-                            add_leftovers(0, fixed16.shr16(o.x), fixed16.shr16(o.y) +% s1, o.frame, null);
-                            add_leftovers(1, fixed16.shr16(o.x), fixed16.shr16(o.y) +% s1, o.frame, null);
+                            drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y) +% s1, o.frame);
+                            drawDrop(1, fixed16.shr16(o.x), fixed16.shr16(o.y) +% s1, o.frame);
                         }
                     }
                     o.used = 0;
@@ -453,10 +475,10 @@ fn furOrFleshStep(o: *Object, s1p: *c_int, flesh: bool) void {
             if (s1p.* < 0) s1p.* += 8;
             if (s1p.* < 0) s1p.* = 0;
             if (s1p.* > 7) s1p.* = 7;
-            add_pob(null, fixed16.shr16(o.x), fixed16.shr16(o.y), o.frame +% s1p.*, null);
+            drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y), o.frame +% s1p.*);
         } else {
             // OBJ_FLESH: no rotation; frame only.
-            add_pob(null, fixed16.shr16(o.x), fixed16.shr16(o.y), o.frame, null);
+            drawDrop(0, fixed16.shr16(o.x), fixed16.shr16(o.y), o.frame);
         }
     }
 }
