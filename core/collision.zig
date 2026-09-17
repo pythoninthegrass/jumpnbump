@@ -33,10 +33,11 @@
 // core/steer.zig's exports (the layout core/world.zig fixes), so they are
 // extern mirrors reached exactly the way steer_players' own callers reach
 // them; player_anims[] is steer.zig's export too. no_gore is the
-// main_info.no_gore flag (main.c:578) — a startup flag with no core home
-// yet, so this module owns the storage per the playbook's globals rule.
-// rnd(), add_object() and serverSendAlive() are extern fns (no @import
-// between ported modules).
+// main_info.no_gore flag (main.c:578) — extern mirror of the one definition in
+// core/c_ref/sim_harness.c, which is also what the C references' main_info
+// twin binds to, so the game-loop layer, this module and the differential all
+// read and write the same flag. rnd(), add_object() and serverSendAlive() are
+// extern fns (no @import between ported modules).
 //
 // Audio: dj_play_sfx(SFX_DEATH, (unsigned short)(SFX_DEATH_FREQ +
 // rnd(2000) - 1000), ...) is exactly where the kill's checksummed rnd()
@@ -66,10 +67,20 @@ const sfx_death: c_int = 2; // SFX_DEATH
 const sfx_death_freq: c_int = 20000; // SFX_DEATH_FREQ
 
 /// main_info.no_gore (main.c:578) — `-nogore` sets it, and the gore spawn
-/// inside a kill is skipped when it is. Owned here as plain storage (the
-/// playbook's globals-ownership rule: main_info has no core home yet), same
-/// single-instance-by-construction arrangement as rnd_call_count.
-pub export var no_gore: c_int = 0;
+/// inside a kill is skipped when it is. Extern mirror of the single definition
+/// in core/c_ref/sim_harness.c (weak there, so this module is still linkable
+/// standalone); the C references' main_info twin binds to the same symbol, so
+/// one flag drives both sides.
+extern var no_gore: c_int;
+
+// Weak backing for the mirror when this module is its own test root (a
+// difftest or the game-loop link supplies sim_harness.c's definition, and the
+// linker prefers a non-weak symbol over this one).
+var unit_no_gore: c_int = 0;
+
+comptime {
+    @export(&unit_no_gore, .{ .name = "no_gore", .linkage = .weak });
+}
 
 /// player[] / ban_map[] — extern mirrors of core/steer.zig's exports in
 /// world.zig's canonical layout (struct-twin rule; the Tier-B harness
@@ -222,8 +233,10 @@ fn processKillPacket(killer: c_int, victim: c_int, x: c_int, y: c_int) void {
         player[c2].image = playerImage(player[c2].anim, player[c2].frame, player[c2].direction);
         if (no_gore == 0) {
             // Five spray loops — 6 fur, then flesh frames 76/77/78/79. Each
-            // add_object argument list evaluates left to right: two rnd(5)
-            // position jitters and two (rnd(65535) - 32768) * 3 velocities.
+            // add_object argument list draws two rnd(5) position jitters and
+            // two (rnd(65535) - 32768) * 3 velocities from the shared rnd()
+            // stream in the reference binary's actual evaluation order (see
+            // furGore/fleshGore below).
             for (0..6) |_| furGore(x, y, @intCast(44 +% c2 *% 8));
             for (0..6) |_| fleshGore(x, y, 76);
             for (0..6) |_| fleshGore(x, y, 77);
@@ -253,19 +266,31 @@ fn scoreDigits(tens: c_int, units: c_int) void {
     _ = .{ tens, units };
 }
 
-/// One OBJ_FUR spray piece (main.c:580). C evaluates the add_object()
-/// argument list strictly left to right and Zig guarantees the same order,
-/// so the four helper calls below draw from the shared rnd() stream in
-/// exactly the sequence the C's one-line call does: two rnd(5) position
-/// jitters, then the two (rnd(65535) - 32768) * 3 velocity draws.
+/// One OBJ_FUR spray piece (main.c:580). C's argument evaluation order
+/// within one call is unspecified, and the reference binary (verified
+/// empirically against the corpus — see the butterfly-spawn velocity draws
+/// in game_loop_difftest.zig's seedLevelObjects) evaluates a call's
+/// arguments right to left: add_object(type, x, y, x_add, y_add, anim,
+/// frame) draws y_add's rnd(65535) first, then x_add's, then y's rnd(5),
+/// then x's rnd(5). Zig guarantees left-to-right evaluation, so the draws
+/// are made in that reversed order first and handed to add_object already
+/// computed, in add_object's normal (x, y, x_add, y_add) parameter order.
 fn furGore(x: c_int, y: c_int, frame: c_int) void {
-    add_object(obj_fur, goreCoord(x), goreCoord(y), goreVelocity(), goreVelocity(), 0, frame);
+    const y_add = goreVelocity();
+    const x_add = goreVelocity();
+    const cy = goreCoord(y);
+    const cx = goreCoord(x);
+    add_object(obj_fur, cx, cy, x_add, y_add, 0, frame);
 }
 
 /// One OBJ_FLESH spray piece (main.c:582-588 — the same expression with a
 /// fixed frame of 76/77/78/79).
 fn fleshGore(x: c_int, y: c_int, frame: c_int) void {
-    add_object(obj_flesh, goreCoord(x), goreCoord(y), goreVelocity(), goreVelocity(), 0, frame);
+    const y_add = goreVelocity();
+    const x_add = goreVelocity();
+    const cy = goreCoord(y);
+    const cx = goreCoord(x);
+    add_object(obj_flesh, cx, cy, x_add, y_add, 0, frame);
 }
 
 /// (pos >> 16) + 6 + rnd(5) — one gore coordinate around the victim.
@@ -337,7 +362,6 @@ extern fn sfxResetZ() void;
 // ban_map_raw for the difftest link; steer.zig's weak exports back the
 // mirrors when this module is its own test root).
 // ---------------------------------------------------------------------------
-
 
 fn resetPlayers() void {
     player_ptr.* = [_]Player{.{}} ** max_players;

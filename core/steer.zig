@@ -166,10 +166,20 @@ const default_ban_map = [world.ban_rows][world.ban_cols]u32{
 /// pointer keeps that byte-for-byte as long as the surrounding storage
 /// matches (the difftest shares one grid, so it matches by construction).
 inline fn banTile(x: Fixed, y: Fixed) u32 {
-    const row: usize = @as(u32, @bitCast(y >> 4));
-    const col: usize = @as(u32, @bitCast(x >> 4));
-    const flat = @as([*]const u32, @ptrCast(ban_map_ptr));
-    return flat[row * world.ban_cols + col];
+    // row/col can be negative (an out-of-grid probe) — the C reads that as
+    // a negative pointer offset from ban_map's base, landing on whatever
+    // memory sits just before it. Truncating a negative row/col through a
+    // u32 bitcast first (as an isize->usize widening would if done at the
+    // wrong width) turns a small backward offset into a many-gigabyte
+    // forward one and reads unmapped memory instead — so the offset is
+    // computed and wrapped at full pointer width, matching two's-complement
+    // pointer arithmetic exactly.
+    const row: isize = @intCast(y >> 4);
+    const col: isize = @intCast(x >> 4);
+    const flat: isize = row *% @as(isize, world.ban_cols) +% col;
+    const base = @intFromPtr(@as([*]const u32, @ptrCast(ban_map_ptr)));
+    const addr = base +% @as(usize, @bitCast(flat *% @as(isize, @sizeOf(u32))));
+    return @as(*const u32, @ptrFromInt(addr)).*;
 }
 
 /// GET_BAN_MAP_IN_WATER (main.c:2066) — void above the feet at +7 px and
@@ -285,12 +295,16 @@ fn playerActionRight(p: *Player) void {
 }
 
 /// The add_object(OBJ_SMOKE, ...) call shared by both action handlers
-/// (main.c:1800, main.c:1841): the three rnd() draws (9, 5, 8192) happen in
-/// argument order, left to right.
+/// (main.c:1800, main.c:1841). C's per-call argument evaluation order is
+/// unspecified, and the reference binary evaluates right to left (verified
+/// against the corpus — see the gore-spray draws in collision.zig's
+/// furGore/fleshGore), so the three rnd() draws (8192, 5, 9) happen in the
+/// reverse of the source's left-to-right reading order: y_add's rnd(8192)
+/// first, then y's rnd(5), then x's rnd(9).
 fn smokePuff(p: *const Player) void {
-    const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 2), rnd(9));
-    const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 13), rnd(5));
     const y_add = fixed16.sub(-16384, rnd(8192));
+    const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 13), rnd(5));
+    const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 2), rnd(9));
     add_object(obj_smoke, x, y, 0, y_add, obj_anim_smoke, 0);
 }
 
@@ -301,8 +315,6 @@ fn smokePuff(p: *const Player) void {
 /// jetpack branch's GET_BAN_MAP_IN_WATER reads whatever s1/s2 the last
 /// block left behind, and that stale read is observable state (it clears
 /// in_water or it doesn't), so the carry-over is reproduced bit-for-bug.
-pub var spring_branch_off: c_int = 1; // sab: skip object reset
-
 pub export fn steer_players() void {
     var s1: Fixed = 0;
     var s2: Fixed = 0;
@@ -340,9 +352,12 @@ pub export fn steer_players() void {
                         if (p.x_add < 0) p.x_add = 0;
                     }
                     if (p.x_add != 0 and banTile(s1 + 8, s2 + 16) == ban_solid) {
-                        const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 2), rnd(9));
-                        const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 13), rnd(5));
+                        // Reference binary evaluates add_object()'s arguments
+                        // right to left; draw order is y_add, y, x (see
+                        // smokePuff above).
                         const y_add = fixed16.sub(-16384, rnd(8192));
+                        const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 13), rnd(5));
+                        const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 2), rnd(9));
                         add_object(obj_smoke, x, y, 0, y_add, obj_anim_smoke, 0);
                     }
                 }
@@ -414,9 +429,10 @@ pub export fn steer_players() void {
                     if (p.y_add < -400000) p.y_add = -400000;
                     if (banMapInWater(s1, s2)) p.in_water = 0;
                     if (rnd(100) < 50) {
-                        const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 6), rnd(5));
-                        const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 10), rnd(5));
+                        // Draw order y_add, y, x — see smokePuff above.
                         const y_add = fixed16.add(16384, rnd(8192));
+                        const y = fixed16.add(fixed16.add(fixed16.shr16(p.y), 10), rnd(5));
+                        const x = fixed16.add(fixed16.add(fixed16.shr16(p.x), 6), rnd(5));
                         add_object(obj_smoke, x, y, 0, y_add, obj_anim_smoke, 0);
                     }
                 }
@@ -472,7 +488,7 @@ pub export fn steer_players() void {
                 p.image = playerImage(p);
                 p.jump_ready = 0;
                 p.jump_abort = 0;
-                if (spring_branch_off == 0) springAnimation(s1, s2);
+                springAnimation(s1, s2);
                 sfxAt(sfx_spring, sfx_spring_freq, 1000);
             }
             s1 = fixed16.shr16(p.x);
@@ -787,7 +803,23 @@ inline fn banMapCell(row: c_int, col: c_int) u32 {
 // be possible: the storage is single-instance by design).
 // ---------------------------------------------------------------------------
 
+/// Sets up the fixed floor/water/ice fixture the two tests below assume.
+/// These tests run standalone against this module's own storage (Tier-A),
+/// but game_loop_difftest.zig also pulls this module in transitively into
+/// a shared Tier-B binary where a linked C reference's strong ban_map_raw
+/// definition can win instead of this module's own default and other
+/// tests can leave it holding whatever a corpus trace last loaded — so
+/// each test seeds the exact grid it needs rather than trusting ambient
+/// state.
+fn setTestBanMap() void {
+    for (ban_map_ptr) |*row| row.* = [_]u32{ban_void} ** world.ban_cols;
+    ban_map_ptr[16] = [_]u32{ban_solid} ** world.ban_cols; // force-filled floor
+    ban_map_ptr[14] = [_]u32{ban_water} ** world.ban_cols; // water row
+    ban_map_ptr[9][12] = ban_ice; // ice tile
+}
+
 test "world storage mirrors the canonical layout and cold-start state" {
+    setTestBanMap();
     try std.testing.expectEqual(@as(usize, 4), player_ptr.len);
     try std.testing.expectEqual(@as(usize, 200), objects_ptr.len);
     try std.testing.expectEqual(@as(u32, 1), ban_map_ptr[16][0]); // force-filled floor
@@ -796,6 +828,7 @@ test "world storage mirrors the canonical layout and cold-start state" {
 }
 
 test "position_player lands on a void tile with ground beneath" {
+    setTestBanMap();
     player_anims = @import("std").mem.zeroes([7]PlayerAnim);
     player_anims[0] = .{ .num_frames = 1, .restart_frame = 0, .frame = .{ .{ .image = 0, .ticks = 0x7fff }, .{}, .{}, .{} } };
     for (player_ptr) |*p| p.* = .{};

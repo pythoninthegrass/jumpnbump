@@ -300,19 +300,21 @@ const default_ban_map = [ban_rows][ban_cols]c_uint{
 
 const testing = std.testing;
 
-// Unit-test storage for the extern mirrors: exporting these definitions
-// under the extern names makes this module's own test binary
-// self-contained (rnd.zig contributes rnd() and rnd_call_count; the audio
-// boundary gets the capture stub below).
-var test_player: [4]Player = [_]Player{.{}} ** 4;
-var test_ban_map: [ban_rows][ban_cols]c_uint = default_ban_map;
+// Unit-test storage for the audio-boundary capture stub. player_raw/
+// ban_map_raw's own weak fallback moved to core/unit_flies_globals.zig
+// (TASK-011.07): baked in here, they collided at compile time with
+// core/steer.zig's identical weak fallback the moment something (core/
+// game_loop.zig) @imports both modules together -- Zig treats two weak
+// Zig-level exports of the same name as an error regardless of whether an
+// external strong definition (core/c_ref/sim_harness.c) would otherwise
+// resolve it. Extracting to an opt-in file, linked only for this module's
+// own standalone Tier-A test (core/build.zig's addTestStep), is the same
+// arrangement core/objects.zig/core/unit_objects_globals.zig already use.
 var test_sfx_channel: c_int = -1;
 var test_sfx_volume: i8 = 0;
 var test_sfx_calls: u32 = 0;
 
 comptime {
-    @export(&test_player, .{ .name = "player_raw", .linkage = .weak });
-    @export(&test_ban_map, .{ .name = "ban_map_raw", .linkage = .weak });
     @export(&test_dj_set_sfx_channel_volume, .{ .name = "dj_set_sfx_channel_volume", .linkage = .weak });
 }
 
@@ -336,11 +338,12 @@ test "isqrtFloor truncates sqrt exactly over the reachable distance range" {
 }
 
 fn resetSwarm(x0: c_int, y0: c_int) void {
-    // Through the pointer aliases, not the test_ban_map/test_player
-    // storage directly: those are only the live backing store when this
-    // file is its own test root (no competing strong extern definition);
-    // linked into another binary (e.g. flies_difftest.zig) that supplies
-    // real player_raw/ban_map_raw storage, writing test_ban_map/test_player
+    // Through the pointer aliases, not some test-only storage directly:
+    // core/unit_flies_globals.zig's weak fallback is only the live backing
+    // store when this file is its own test root (no competing strong
+    // extern definition); linked into another binary (e.g.
+    // flies_difftest.zig, core/game_loop.zig) that supplies real
+    // player_raw/ban_map_raw storage, writing a test-only shadow variable
     // directly would silently leave the actual extern arrays untouched.
     ban_map_ptr.* = default_ban_map;
     lord_of_the_flies = 0;

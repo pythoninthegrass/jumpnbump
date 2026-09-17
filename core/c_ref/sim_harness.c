@@ -15,6 +15,14 @@
  * so the C references' externs bind directly to core/steer.zig's exports.
  * keyb[] is sdl/interrpt.c's array (char keyb[256], sdl/interrpt.c:42),
  * mirrored by core/cpu_move.zig's extern.
+ *
+ * no_gore is main_info.no_gore (main.c:578). Like the arrays above it gets
+ * exactly one definition here so the C references (`#define main_info` over a
+ * one-field struct twin, core/c_ref/collision.c) and the Zig modules
+ * (core/collision.zig's `extern var no_gore`) read and write one flag; the
+ * game-loop layer (core/game_loop.zig) reaches it the same way. Weak so a
+ * link that supplies its own (a future level/config module) wins without a
+ * duplicate-symbol error.
  */
 
 #define JNB_MAX_PLAYERS 4
@@ -58,3 +66,4 @@ player_t player_raw[JNB_MAX_PLAYERS];
 object_t objects_raw[NUM_OBJECTS];
 unsigned int ban_map_raw[17][22];
 char keyb[256];
+__attribute__((weak)) int no_gore = 0;

@@ -81,6 +81,7 @@ extern var player_raw: [world.max_players]world.Player;
 extern var objects_raw: [world.num_objects]world.Object;
 extern var ban_map_raw: [world.ban_rows][world.ban_cols]c_uint;
 extern var keyb: [256]i8;
+extern var no_gore: c_int;
 
 const player_ptr: *[world.max_players]world.Player = @constCast(&player_raw);
 
@@ -150,7 +151,7 @@ export var main_info: MainInfo = .{};
 /// Set the kill-gore flag on both sides: collision.zig's `no_gore` mirror
 /// and the C reference's `main_info.no_gore`.
 fn noGoreC(value: c_int) void {
-    collision.no_gore = value;
+    no_gore = value;
     main_info.no_gore = value;
 }
 

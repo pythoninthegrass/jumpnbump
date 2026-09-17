@@ -46,7 +46,7 @@ fn addCliTools(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // Tier-A unit tests for ported Zig modules (docs/porting-playbook.md).
 // Empty until TASK-011.* ports a main.c subsystem into its own core/*.zig
 // module; each porting subtask appends its module's test file here.
-const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig", "collision.zig" };
+const unit_test_files = [_][]const u8{ "dat.zig", "gob.zig", "pcx.zig", "levelmap.zig", "fixed16.zig", "world.zig", "flies.zig", "steer.zig", "objects.zig", "collision.zig", "game_loop.zig" };
 
 fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("test", "Run Tier-A unit tests for ported Zig modules");
@@ -88,6 +88,22 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
                 }),
             });
             mod.addObjectFile(rnd_obj.getEmittedBin());
+            // TASK-011.07: player_raw/ban_map_raw's weak fallback moved out
+            // of flies.zig itself into this opt-in file (see its header
+            // comment) so core/game_loop.zig can @import both flies.zig and
+            // core/steer.zig without their weak fallbacks colliding; this
+            // module's own standalone Tier-A test still needs it linked
+            // explicitly, same as core/objects.zig's unit_objects_globals.zig.
+            const flies_globals_obj = b.addObject(.{
+                .name = "unit_flies_globals",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("unit_flies_globals.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod.addObjectFile(flies_globals_obj.getEmittedBin());
         }
         // TASK-011.03: collision.zig's extern mirrors (player_raw/
         // ban_map_raw) get the same shared-storage C definitions the Tier-B
@@ -189,6 +205,27 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
             const obj_globals_obj = b.addObject(.{ .name = "unit_objects_globals", .root_module = obj_globals_mod });
             mod.addObjectFile(obj_globals_obj.getEmittedBin());
         }
+        // TASK-011.07: game_loop.zig @imports every subsystem module
+        // directly (steer/cpu_move/collision/objects/flies/rnd), so their
+        // mutual extern-fn cross-references (rnd, add_object, etc.) and
+        // world-storage weak fallbacks all resolve inside this one
+        // compilation with no extra linking -- except add_pob/
+        // add_leftovers, which no core module defines (the draw boundary),
+        // so this needs the same no-op stubs objects.zig's own Tier-A test
+        // links above.
+        if (std.mem.eql(u8, file, "game_loop.zig")) {
+            mod.linkSystemLibrary("m", .{});
+            const gl_draw_obj = b.addObject(.{
+                .name = "game_loop_unit_objects_draw",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("unit_objects_draw.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod.addObjectFile(gl_draw_obj.getEmittedBin());
+        }
         const mod_test = b.addTest(.{ .root_module = mod });
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
@@ -203,7 +240,7 @@ fn addTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bu
 // first per-tick stateful replay: the C reference is extracted verbatim from
 // main.c by core/c_ref/extract_steered.py into core/c_ref/steer.c. Corpus-
 // replay entries join as later TASK-011.* ports land.
-const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig", "objects_difftest.zig", "collision_difftest.zig" };
+const diff_test_files = [_][]const u8{ "rnd_difftest.zig", "cpu_move_difftest.zig", "flies_difftest.zig", "steer_difftest.zig", "objects_difftest.zig", "collision_difftest.zig", "game_loop_difftest.zig" };
 
 fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) void {
     const step = b.step("difftest", "Run Tier-B differential tests against renamed C references");
@@ -363,6 +400,46 @@ fn addDiffTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: st
                 }),
             });
             mod_test.root_module.addObjectFile(collision_draw_obj.getEmittedBin());
+        }
+        // TASK-011.07: no renamed-C reference at all -- the oracle is the
+        // corpus's own recorded checksums (tests/corpus/*.jsonl), not a
+        // second implementation of game_loop's order. game_loop_difftest.zig
+        // @imports every subsystem module directly (same as game_loop.zig's
+        // own Tier-A wiring above), so it only needs the real world storage
+        // and the draw-boundary stubs, not any compileRenamedCRef object.
+        if (std.mem.eql(u8, file, "game_loop_difftest.zig")) {
+            // Loads data/jumpbump.dat's real levelmap.txt (core/dat.zig +
+            // core/levelmap.zig, TASK-010.01/010.04) for the actual
+            // corpus-recorded level, so it needs libbz2 like core/dat.zig's
+            // own Tier-A test does.
+            mod_test.root_module.linkSystemLibrary("bz2", .{});
+            // Pre-compiled as its own object (not addCSourceFile straight
+            // into this root module): this binary @imports both
+            // core/steer.zig and core/flies.zig, whose own weak
+            // player_raw/ban_map_raw fallbacks (for when either is its own
+            // standalone Tier-A test root) collide if Zig's own module
+            // graph has to reconcile two weak Zig-level exports of the same
+            // name -- pre-compiling sim_harness.c and linking the object
+            // lets ordinary ELF weak-symbol override (strong beats weak)
+            // resolve it at the final link step instead.
+            const gl_dt_harness_mod = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            });
+            gl_dt_harness_mod.addCSourceFile(.{ .file = b.path("c_ref/sim_harness.c"), .flags = &.{"-fwrapv"} });
+            const gl_dt_harness_obj = b.addObject(.{ .name = "game_loop_dt_harness", .root_module = gl_dt_harness_mod });
+            mod_test.root_module.addObjectFile(gl_dt_harness_obj.getEmittedBin());
+            const gl_dt_draw_obj = b.addObject(.{
+                .name = "game_loop_dt_objects_draw",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("unit_objects_draw.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            mod_test.root_module.addObjectFile(gl_dt_draw_obj.getEmittedBin());
         }
         step.dependOn(&b.addRunArtifact(mod_test).step);
     }
