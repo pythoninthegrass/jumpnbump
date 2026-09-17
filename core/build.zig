@@ -557,18 +557,19 @@ fn addAbiStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     return abi_lib;
 }
 
-// abitest.zig (TASK-012.03) is the Tier-C ABI conformance suite: once
-// ../include/jumpnbump.h exists, it reaches abi_lib exclusively through
-// @cImport, never by importing core Zig modules directly (checked
-// separately by a purity script, following neo_snake's
-// tools/validate_abi_test_purity.py). Until then it's a placeholder that
-// proves the step runs against the empty abi_lib built above.
+// abitest.zig (TASK-012.03) is the Tier-C ABI conformance suite: it reaches
+// abi_lib exclusively through @cImport(jumpnbump.h), never by importing core
+// Zig modules directly (checked separately by tools/validate_abi_test_purity.py,
+// following neo_snake's script of the same name).
 fn addAbiTestStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, abi_lib: *std.Build.Step.Compile) void {
     const abitest = b.createModule(.{
         .root_source_file = b.path("abitest.zig"),
         .target = target,
         .optimize = optimize,
+        // link_libc is required for @cImport to work at all.
+        .link_libc = true,
     });
+    abitest.addIncludePath(b.path("../include"));
     abitest.linkLibrary(abi_lib);
     const abitest_exe = b.addTest(.{ .root_module = abitest });
     const run_abitest = b.addRunArtifact(abitest_exe);

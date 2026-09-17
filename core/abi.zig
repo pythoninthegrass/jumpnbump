@@ -405,14 +405,21 @@ export fn jnb_world_dump(world_ptr: ?*const anyopaque, out_buf: ?[*]u8, out_capa
         .ban_map = ban_map_raw,
     };
 
-    var fba = std.heap.FixedBufferAllocator.init(buf[0..out_capacity]);
-    var out: std.ArrayList(u8) = .empty;
-    // dumpTo only ever appends world.dump_len bytes total (checked by
-    // core/world.zig's own test suite); the fixed buffer allocator backing
-    // this call is exactly out_capacity >= dump_len bytes, so append cannot
-    // fail here.
+    // Sized to exactly world.dump_len (not out_capacity): dumpTo appends
+    // world.dump_len bytes total (checked by core/world.zig's own test
+    // suite), and pre-allocating that exact capacity up front means
+    // appendSlice's growth check never fires (ensureUnusedCapacity is a
+    // no-op once capacity already covers every append) — appending into a
+    // FixedBufferAllocator sized to out_capacity instead let ArrayList's
+    // doubling-growth strategy request more than was available and fail
+    // with OutOfMemory even when out_capacity == dump_len exactly. This
+    // also writes directly into the caller's buf, so no extra copy is
+    // needed (the removed `@memcpy(buf[0..out.items.len], out.items)`
+    // aliased its own source and destination, since out.items already lived
+    // inside buf).
+    var fba = std.heap.FixedBufferAllocator.init(buf[0..world.dump_len]);
+    var out = std.ArrayList(u8).initCapacity(fba.allocator(), world.dump_len) catch unreachable;
     world.dumpTo(&out, fba.allocator(), &snapshot) catch unreachable;
-    @memcpy(buf[0..out.items.len], out.items);
     written.* = out.items.len;
     return JNB_OK;
 }
