@@ -509,15 +509,51 @@ fn addAbiStep(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .target = target,
         .optimize = optimize,
         .pic = true,
+        // rnd.zig's seed()/rnd() @cImport stdlib.h for srand()/rand().
+        .link_libc = true,
     });
+    // core/abi_globals.zig (TASK-012.02): the real player_raw/objects_raw/
+    // ban_map_raw/keyb/no_gore storage, compiled as its own object rather
+    // than @imported directly — see that file's header comment for why
+    // (steer.zig/collision.zig's own weak fallbacks of the same names would
+    // otherwise collide with a strong definition in the same compilation).
+    const globals_obj = b.addObject(.{
+        .name = "abi_globals",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("abi_globals.zig"),
+            .target = target,
+            .optimize = optimize,
+            .pic = true,
+        }),
+    });
+    abi.addObjectFile(globals_obj.getEmittedBin());
+
     const abi_lib = b.addLibrary(.{
         .name = "jumpnbump",
         .linkage = .static,
         .root_module = abi,
     });
-    b.installArtifact(abi_lib);
-    const abi_step = b.step("abi", "Build the static library exporting the C ABI (core/abi.zig)");
-    abi_step.dependOn(&b.addInstallArtifact(abi_lib, .{}).step);
+    const install = b.addInstallArtifact(abi_lib, .{});
+
+    // TASK-012.02: post-link symbol localization. abi.zig transitively
+    // @imports every ported module (via game_loop.zig), which drags each
+    // module's own pre-existing `export fn`/`export var` (steer_players,
+    // rnd, is_server, player_anims, pogostick, ... — TASK-011.*'s
+    // cross-module-linkage convention, non-jnb_-prefixed, predating this
+    // ABI) into the same static archive. Zig's `export` keyword always
+    // emits a default-visibility global symbol and there is no way to make
+    // one file-local from inside Zig itself, so this demotes every defined
+    // global symbol not matching the frozen jnb_ ABI surface to local,
+    // post-link. neo_snake never needed an equivalent step: its own modules
+    // never use bare `export fn` outside abi.zig.
+    const localize = b.addSystemCommand(&.{"sh"});
+    localize.addFileArg(b.path("localize_abi_symbols.sh"));
+    localize.addArg(b.getInstallPath(.lib, abi_lib.out_lib_filename));
+    localize.addFileArg(b.path("../include/jumpnbump.h"));
+    localize.step.dependOn(&install.step);
+
+    const abi_step = b.step("abi", "Build the static library exporting the C ABI (core/abi.zig), localized to only the jnb_ symbol surface");
+    abi_step.dependOn(&localize.step);
     return abi_lib;
 }
 

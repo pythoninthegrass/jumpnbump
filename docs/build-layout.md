@@ -98,12 +98,16 @@ Target ordering, cheapest static check first:
 1. `core:test` (Tier-A)
 2. `core:abi-header-check` — `zig cc -std=c11 -c core/abi_header_check.c -o /dev/null`,
    proving `include/jumpnbump.h` compiles standalone with zero warnings
-3. `core:abi-symbols` — `nm -g --defined-only` on the built core, asserting every symbol
-   matches `^_?jnb_`
-4. `core:abitest-purity` — the `@cImport`-only enforcement script
-5. `core:abitest` (Tier-C)
-6. `core:difftest` (Tier-B)
-7. The Godot/gdUnit4 Tier-D replay step (Phase 5)
+3. `core:abi-symbols` — `zig build abi` (runs `core/localize_abi_symbols.sh`'s post-link
+   `objcopy --keep-global-symbols` pass), then `nm -g --defined-only` on the built
+   `libjumpnbump.a`, asserting every symbol matches `^_?jnb_`
+4. `core:abi-exporter-purity` — `tools/validate_abi_exporter.py`, a source-level check
+   that no `core/*.zig` file other than `core/abi.zig`/`core/abi_globals.zig` defines a
+   `jnb_`-prefixed export (faster-failing than #3, though #3 alone is sufficient)
+5. `core:abitest-purity` — the `@cImport`-only enforcement script
+6. `core:abitest` (Tier-C)
+7. `core:difftest` (Tier-B)
+8. The Godot/gdUnit4 Tier-D replay step (Phase 5)
 
 Each step lands as its owning task completes; `check` is only extended, never reordered
 around a step that doesn't exist yet.
