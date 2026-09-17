@@ -29,11 +29,16 @@ stderr.txt
 .zig-cache/
 zig-out/
 
-# SCons/GDExtension build artifacts (extension/, TASK-012.04)
+# SCons/GDExtension build artifacts (extension/, TASK-012.04/TASK-012.05).
+# game/bin/*.gdextension is checked in (it's config, not a build output).
 *.os
 extension/.sconsign.dblite
 extension/.sconf_temp/
-/game/bin/
+/game/bin/*.so
+/game/bin/*.dylib
+/game/bin/*.dll
+/game/bin/*.wasm
+/game/bin/*.framework/
 
 # Taskfile-managed local cache (zig cache dir, macOS CI's SDL 1.2 source build)
 /.cache/

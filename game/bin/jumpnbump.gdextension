@@ -1,0 +1,11 @@
+[configuration]
+
+entry_symbol = "jumpnbump_library_init"
+compatibility_minimum = "4.7"
+
+[libraries]
+
+linux.debug.x86_64 = "res://bin/libjumpnbump.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://bin/libjumpnbump.linux.template_release.x86_64.so"
+macos.debug = "res://bin/libjumpnbump.macos.template_debug.framework"
+macos.release = "res://bin/libjumpnbump.macos.template_release.framework"
