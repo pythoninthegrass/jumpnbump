@@ -5,7 +5,30 @@ version: "3.0"
 # TASK-014: the Godot 4.7.1 project under game/.
 
 tasks:
+  bootstrap:
+    desc: "Install gdUnit4, the Tier-D test framework (checksum-verified download, TASK-014.07)"
+    cmds:
+      - uv run tools/bootstrap.py game gdunit4
+
   boundary-check:
     desc: "Fail if any script outside game/simulation/ references JumpnbumpWorld (TASK-014.01)"
     cmds:
       - uv run tools/validate_game_boundary.py
+
+  test:
+    desc: "Run the game/tests/ suite headlessly through gdUnit4 (TASK-014.07)"
+    summary: |
+      task game:test
+
+      Non-zero exit on any failing test case (gdUnit4's own CI exit codes,
+      not a wrapper-imposed one). Also runs the pre-gdUnit4 standalone
+      smoke scripts (test_tick_driver.gd and friends, TASK-014.02-.06) via
+      `godot --headless --script`, since those predate gdUnit4 and still
+      carry real coverage.
+    cmds:
+      - godot --headless --path game --script res://tests/test_tick_driver.gd
+      - godot --headless --path game --script res://tests/test_sprite_geometry.gd
+      - godot --headless --path game --script res://tests/test_level_layers.gd
+      - godot --headless --path game --script res://tests/test_text_geometry.gd
+      - godot --headless --path game --script res://tests/test_audio.gd
+      - godot --headless --path game -s res://addons/gdUnit4/bin/GdUnitCmdTool.gd -a res://tests --ignoreHeadlessMode

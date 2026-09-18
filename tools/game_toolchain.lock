@@ -12,3 +12,12 @@
 # the distro's package, EPEL on RHEL-likes); this pin is a version check
 # against `openmpt123 --short-version`, not a fetch target.
 OPENMPT123_VERSION="0.8.7"
+
+# gdUnit4 (TASK-014.07): the GDScript test framework used for the Tier-D
+# corpus-replay suite, extracted to game/addons/gdUnit4 by
+# tools/bootstrap.py -- not committed to git, same convention as
+# ~/git/neo_snake's own pin (identical upstream release, so the same
+# version/URL/SHA256).
+GDUNIT4_VERSION="6.2.1"
+GDUNIT4_URL="https://github.com/godot-gdunit-labs/gdUnit4/archive/refs/tags/v6.2.1.zip"
+GDUNIT4_SHA256="ffb48847c46f386bf0c7a716fd68c6dace7d67730775cf7f748adce8ef3ed794"

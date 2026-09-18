@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 2,
+  "headless_ai_mask": 0,
+  "extra_flags": [],
+  "mechanic": "player 1 walks/falls into a BAN_WATER tile; in_water toggles on and buoyancy physics take over (this codebase's closest equivalent to the 'drowning' mechanic: there is no water death, only immersion/swim-out)"
+}

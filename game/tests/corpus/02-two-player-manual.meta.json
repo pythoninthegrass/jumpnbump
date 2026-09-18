@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 2,
+  "headless_ai_mask": 0,
+  "extra_flags": [],
+  "mechanic": "2 players, both human/scripted (AI off), horizontal approach and jump"
+}

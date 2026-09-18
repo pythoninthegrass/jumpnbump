@@ -43,6 +43,15 @@ extension/.sconf_temp/
 # Taskfile-managed local cache (zig cache dir, macOS CI's SDL 1.2 source build)
 /.cache/
 
+# tools/bootstrap.py's checksum-verified downloads (TASK-014.07)
+/.tools/
+
+# gdUnit4 (TASK-014.07) -- checksum-verified download, not vendored
+/game/addons/gdUnit4/
+
+# gdUnit4's generated HTML/XML test reports (TASK-014.07)
+/game/reports/
+
 # Godot editor import cache (game/, TASK-014.01) -- regenerated on first open;
 # *.import sidecar files and *.uid files next to source assets/scripts are
 # real, stable metadata and stay committed, matching neo_snake's convention.

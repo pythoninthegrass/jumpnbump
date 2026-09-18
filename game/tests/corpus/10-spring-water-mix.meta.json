@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 2,
+  "headless_ai_mask": 0,
+  "extra_flags": [],
+  "mechanic": "player 1 (p2 keys) bounces on BAN_SPRING repeatedly and swims through BAN_WATER (buoyancy + splash SFX draws); supplements 06/07 for TASK-011.02 difftest coverage"
+}

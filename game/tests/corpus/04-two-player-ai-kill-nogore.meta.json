@@ -1,0 +1,7 @@
+{
+  "seed": 1,
+  "headless_players": 2,
+  "headless_ai_mask": 1,
+  "extra_flags": ["-nogore"],
+  "mechanic": "identical scenario to 03-two-player-ai-kill but with -nogore: the kill still happens (bumps still increments) but no OBJ_FUR/OBJ_FLESH gore objects are spawned, so objects[]/rnd_call_count diverge from 03 from the kill frame onward"
+}

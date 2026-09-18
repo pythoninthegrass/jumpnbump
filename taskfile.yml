@@ -33,3 +33,4 @@ tasks:
       - make
       - task: assets:check
       - task: game:boundary-check
+      - task: game:test
