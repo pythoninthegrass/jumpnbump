@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# TASK-014: the Godot 4.7.1 project under game/.
+
+tasks:
+  boundary-check:
+    desc: "Fail if any script outside game/simulation/ references JumpnbumpWorld (TASK-014.01)"
+    cmds:
+      - uv run tools/validate_game_boundary.py

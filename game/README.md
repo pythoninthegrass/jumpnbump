@@ -9,7 +9,6 @@ assembled in code, split into four layers matching
 - `platform/` — input routing, settings persistence, app lifecycle
 - `content/` — data-driven config (palettes, tuning, audio manifests)
 
-A boundary-validator script fails `task check` if any script outside
-`simulation/` touches the GDExtension class (`TASK-014.01`).
-
-Placeholder until `TASK-014.01` creates the project skeleton.
+`tools/validate_game_boundary.py`, wired into `task game:boundary-check`
+(part of `task check`), fails if any script outside `simulation/` touches
+`JumpnbumpWorld`, the GDExtension class.

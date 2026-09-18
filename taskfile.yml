@@ -19,6 +19,7 @@ env:
 includes:
   ci: taskfiles/ci.yml
   assets: taskfiles/assets.yml
+  game: taskfiles/game.yml
 
 tasks:
   default:
@@ -31,3 +32,4 @@ tasks:
     cmds:
       - make
       - task: assets:check
+      - task: game:boundary-check
