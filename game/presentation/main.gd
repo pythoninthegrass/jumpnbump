@@ -30,14 +30,41 @@ const SAMPLE_LEVEL_TEXT := (
 	"1111111111111111111111\n"
 )
 
+## Level layer paths are hardcoded here as a placeholder: real level
+## selection/scaling/letterboxing is TASK-014.04's job. This task
+## (TASK-014.03) only needs background-under-sprites,
+## masked-foreground-over-sprites ordering to exist and be verifiable.
+const LEVEL_BACKGROUND := "res://content/levels/level_background.png"
+const LEVEL_FOREGROUND := "res://content/levels/level_foreground.png"
+
 var _world: SimWorld
 var _gate := false
+var _sprite_renderer: SpriteRenderer
 
 
 func _ready() -> void:
 	_world = SimWorld.new()
 	var result := _world.init(1, false, SAMPLE_LEVEL_TEXT.to_utf8_buffer())
 	_gate = result == SimWorld.OK
+
+	# Child order is the draw order (CanvasItem default): background first,
+	# sprites in the middle, masked foreground last/on top (AC#2).
+	var background := Sprite2D.new()
+	background.name = "Background"
+	background.centered = false
+	background.texture = load(LEVEL_BACKGROUND)
+	add_child(background)
+
+	_sprite_renderer = SpriteRenderer.new()
+	_sprite_renderer.name = "SpriteRenderer"
+	add_child(_sprite_renderer)
+	_sprite_renderer.setup(_world)
+
+	var foreground := Sprite2D.new()
+	foreground.name = "Foreground"
+	foreground.centered = false
+	foreground.texture = load(LEVEL_FOREGROUND)
+	add_child(foreground)
 
 
 func _process(delta: float) -> void:
