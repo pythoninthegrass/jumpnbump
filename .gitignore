@@ -43,5 +43,10 @@ extension/.sconf_temp/
 # Taskfile-managed local cache (zig cache dir, macOS CI's SDL 1.2 source build)
 /.cache/
 
+# Godot editor import cache (game/, TASK-014.01) -- regenerated on first open;
+# *.import sidecar files and *.uid files next to source assets/scripts are
+# real, stable metadata and stay committed, matching neo_snake's convention.
+/game/.godot/
+
 # Agent config
 CLAUDE.md
