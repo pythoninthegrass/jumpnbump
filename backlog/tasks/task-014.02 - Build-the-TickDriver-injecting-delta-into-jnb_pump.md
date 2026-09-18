@@ -1,9 +1,10 @@
 ---
 id: TASK-014.02
 title: Build the TickDriver injecting delta into jnb_pump
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:16'
+updated_date: '2026-09-18 00:15'
 labels: []
 milestone: m-5
 dependencies: []
@@ -21,7 +22,7 @@ Write game/simulation/tick_driver.gd and game/simulation/world.gd (a pure pass-t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 TickDriver.advance_frame(world, delta_ms, running, gate) is a pure static function taking delta as a parameter, testable without a running scene
-- [ ] #2 Pausing sets gate=false and the world state does not advance while paused
-- [ ] #3 The 60Hz original tick rate is preserved through jnb_pump's internal accumulator, not reimplemented in GDScript
+- [x] #1 TickDriver.advance_frame(world, delta_ms, running, gate) is a pure static function taking delta as a parameter, testable without a running scene
+- [x] #2 Pausing sets gate=false and the world state does not advance while paused
+- [x] #3 The 60Hz original tick rate is preserved through jnb_pump's internal accumulator, not reimplemented in GDScript
 <!-- AC:END -->

@@ -1,9 +1,10 @@
 ---
 id: TASK-014.01
 title: Godot 4.7.1 project skeleton with the four-layer boundary
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:15'
+updated_date: '2026-09-18 00:05'
 labels: []
 milestone: m-5
 dependencies: []
@@ -21,8 +22,8 @@ Create the Godot 4.7.1 project under game/ with a single main.tscn and script, e
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 game/project.godot targets Godot 4.7 with the original 400x256 design viewport, canvas_items stretch mode, and delta_smoothing disabled
-- [ ] #2 A single main.tscn exists; all other nodes are added in _ready()
-- [ ] #3 The four directories exist with an enforced boundary: only game/simulation/ may reference JumpnbumpWorld or its class name
-- [ ] #4 task game:boundary-check fails on a deliberately-introduced violation and passes once removed
+- [x] #1 game/project.godot targets Godot 4.7 with the original 400x256 design viewport, canvas_items stretch mode, and delta_smoothing disabled
+- [x] #2 A single main.tscn exists; all other nodes are added in _ready()
+- [x] #3 The four directories exist with an enforced boundary: only game/simulation/ may reference JumpnbumpWorld or its class name
+- [x] #4 task game:boundary-check fails on a deliberately-introduced violation and passes once removed
 <!-- AC:END -->
