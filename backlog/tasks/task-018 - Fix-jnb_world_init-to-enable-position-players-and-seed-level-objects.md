@@ -1,9 +1,10 @@
 ---
 id: TASK-018
 title: Fix jnb_world_init to enable/position players and seed level objects
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-18 00:47'
+updated_date: '2026-09-18 01:37'
 labels:
   - core
   - abi
@@ -26,9 +27,15 @@ This blocks TASK-014.07's AC#1 (task game:test passes) and AC#3 (every corpus tr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 core/abi.zig exposes jnb_* export(s) to enable/position a player (mirroring main.c's position_player() call per enabled player)
-- [ ] #2 core/abi.zig exposes jnb_* export(s) to seed level objects (springs/butterflies) mirroring main.c's init_level()
-- [ ] #3 AI-driven players are controllable via an exposed ai_mask on the ABI
-- [ ] #4 game/tests/test_corpus_replay.gd's test_every_corpus_trace_replays_with_matching_checksums passes for all 10 Phase 1 corpus traces
-- [ ] #5 task game:test passes headlessly
+- [x] #1 core/abi.zig exposes jnb_* export(s) to enable/position a player (mirroring main.c's position_player() call per enabled player)
+- [x] #2 core/abi.zig exposes jnb_* export(s) to seed level objects (springs/butterflies) mirroring main.c's init_level()
+- [x] #3 AI-driven players are controllable via an exposed ai_mask on the ABI
+- [x] #4 game/tests/test_corpus_replay.gd's test_every_corpus_trace_replays_with_matching_checksums passes for all 10 Phase 1 corpus traces
+- [x] #5 task game:test passes headlessly
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+core/abi.zig's jnb_world_init now replicates main.c's headless-init sequence: enable/AI-mask/position each configured player (jnb_config gains player_count/player_ai_mask/no_gore), seed the level's springs/butterflies, spawn flies if enabled. Also fixed two further pre-existing defects discovered while chasing full corpus parity: frame_num's off-by-one against main.c's pre-increment checksum convention, and stepOneTick not zeroing keyb[] before each tick (broke AI-driven hysteresis). All 10 Phase 1 corpus traces now replay through the real GDExtension with matching checksums frame-for-frame; task game:test and task check both pass end to end.
+<!-- SECTION:FINAL_SUMMARY:END -->
