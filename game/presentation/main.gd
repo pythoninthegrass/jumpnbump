@@ -53,6 +53,7 @@ const WINDOW_SCALE := 2
 var _world: SimWorld
 var _gate := false
 var _sprite_renderer: SpriteRenderer
+var _scoreboard_renderer: ScoreboardRenderer
 
 
 ## Pure function (no Window/DisplayServer access) so window-sizing math is
@@ -95,6 +96,13 @@ func _ready() -> void:
 	foreground.centered = false
 	foreground.texture = load(LEVEL_FOREGROUND)
 	add_child(foreground)
+
+	# Scoreboard draws last (on top of the masked foreground) since it's HUD
+	# text/digits, not part of the level's own layering (TASK-014.05).
+	_scoreboard_renderer = ScoreboardRenderer.new()
+	_scoreboard_renderer.name = "ScoreboardRenderer"
+	add_child(_scoreboard_renderer)
+	_scoreboard_renderer.setup(_world)
 
 
 func _process(delta: float) -> void:
