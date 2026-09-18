@@ -1,9 +1,10 @@
 ---
 id: TASK-014.04
 title: Build level layers with integer scaling and letterboxing
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:16'
+updated_date: '2026-09-18 00:23'
 labels: []
 milestone: m-5
 dependencies: []
@@ -21,7 +22,7 @@ Compose the background and masked-foreground level layers from the asset pipelin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The level renders at 400x256 with the masked foreground correctly composited over sprites
-- [ ] #2 Resizing the window preserves aspect ratio via letterboxing with no stretching distortion
-- [ ] #3 Window sizing logic is set in code (not hardcoded in project.godot) to allow for future display-scale awareness, matching the neo_snake GameScreen._ready() pattern
+- [x] #1 The level renders at 400x256 with the masked foreground correctly composited over sprites
+- [x] #2 Resizing the window preserves aspect ratio via letterboxing with no stretching distortion
+- [x] #3 Window sizing logic is set in code (not hardcoded in project.godot) to allow for future display-scale awareness, matching the neo_snake GameScreen._ready() pattern
 <!-- AC:END -->
