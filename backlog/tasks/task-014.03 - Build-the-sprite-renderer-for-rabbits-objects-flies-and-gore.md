@@ -1,9 +1,10 @@
 ---
 id: TASK-014.03
 title: 'Build the sprite renderer for rabbits, objects, flies, and gore'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:16'
+updated_date: '2026-09-18 00:21'
 labels: []
 milestone: m-5
 dependencies: []
@@ -21,7 +22,7 @@ Build the presentation-layer sprite renderer in game/presentation/ that reads th
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All four categories (players, particles, flies, gore) render at the correct position, frame, and hotspot offset for a range of test states
-- [ ] #2 Sprite draw order matches the original layering (background under sprites, masked foreground over sprites)
-- [ ] #3 Rendering logic lives in pure, Node-independent helper functions where possible, to support headless testing per neo_snake's board_geometry.gd precedent
+- [x] #1 All four categories (players, particles, flies, gore) render at the correct position, frame, and hotspot offset for a range of test states
+- [x] #2 Sprite draw order matches the original layering (background under sprites, masked foreground over sprites)
+- [x] #3 Rendering logic lives in pure, Node-independent helper functions where possible, to support headless testing per neo_snake's board_geometry.gd precedent
 <!-- AC:END -->
