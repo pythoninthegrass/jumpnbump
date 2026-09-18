@@ -113,6 +113,68 @@ const ban_map_ptr: *[world.ban_rows][world.ban_cols]u32 = @constCast(&ban_map_ra
 pub export var player_anims: [7]PlayerAnim = [_]PlayerAnim{.{}} ** 7;
 pub export var object_anims: [8]ObjectAnim = [_]ObjectAnim{.{}} ** 8;
 
+/// Loads player_anims/object_anims from main.c's own static initializers
+/// (main.c:3105-3112's player_anim_data[]/main.c:96-171's object_anims) —
+/// the literal table main.c populates once at program start, before any
+/// level or player is set up. No core module ports that literal load as its
+/// own task (it lives in main() before init_level(), out of TASK-011.*'s
+/// per-subsystem scope), so this is the one shared place that transcribes
+/// both tables, called by every real entry point that needs a functioning
+/// world (core/abi.zig's jnb_world_init, core/game_loop_difftest.zig's Tier-B
+/// corpus replay) instead of each duplicating its own copy.
+///
+/// NOTE: core/collision_difftest.zig's own loadObjectAnims has transcription
+/// errors relative to main.c (smoke's num_frames is 5, not 6; the two pink
+/// butterfly rows are their own distinct 32-37/38-43 image ranges, not a
+/// copy of yellow's 26-31; flesh_trace is nf=4 with images 76-79, not nf=8
+/// with 32-39) that its own tests don't happen to exercise (it never reads a
+/// pink butterfly's or flesh_trace's frame images) — this transcribes the
+/// table fresh from main.c rather than copying that one.
+pub fn loadDefaultAnims() void {
+    // main.c:3105's player_anim_data[]: num_frames, restart_frame, then 4
+    // (image, ticks) pairs per row, flat.
+    const player_data = [_]c_int{
+        1, 0, 0, 0x7fff, 0, 0, 0, 0, 0, 0,
+        4, 0, 0, 4, 1, 4, 2, 4, 3, 4,
+        1, 0, 4, 0x7fff, 0, 0, 0, 0, 0, 0,
+        4, 2, 5, 8, 6, 10, 7, 3, 6, 3,
+        1, 0, 6, 0x7fff, 0, 0, 0, 0, 0, 0,
+        2, 1, 5, 8, 4, 0x7fff, 0, 0, 0, 0,
+        1, 0, 8, 5, 0, 0, 0, 0, 0, 0,
+    };
+    for (0..7) |a| {
+        player_anims[a].num_frames = player_data[a * 10];
+        player_anims[a].restart_frame = player_data[a * 10 + 1];
+        for (0..4) |f| {
+            player_anims[a].frame[f].image = player_data[a * 10 + f * 2 + 2];
+            player_anims[a].frame[f].ticks = player_data[a * 10 + f * 2 + 3];
+        }
+    }
+
+    // main.c:96-171's object_anims[8] static initializer, transcribed row
+    // for row: spring, splash, smoke, yel_butfly_right, yel_butfly_left,
+    // pink_butfly_right, pink_butfly_left, flesh_trace.
+    const ObjRow = struct { nf: c_int, rf: c_int, frames: [10][2]c_int };
+    const object_rows = [_]ObjRow{
+        .{ .nf = 6, .rf = 0, .frames = .{ .{ 0, 3 }, .{ 1, 3 }, .{ 2, 3 }, .{ 3, 3 }, .{ 4, 3 }, .{ 5, 3 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } } },
+        .{ .nf = 9, .rf = 0, .frames = .{ .{ 6, 2 }, .{ 7, 2 }, .{ 8, 2 }, .{ 9, 2 }, .{ 10, 2 }, .{ 11, 2 }, .{ 12, 2 }, .{ 13, 2 }, .{ 14, 2 }, .{ 0, 0 } } },
+        .{ .nf = 5, .rf = 0, .frames = .{ .{ 15, 3 }, .{ 16, 3 }, .{ 16, 3 }, .{ 17, 3 }, .{ 18, 3 }, .{ 19, 3 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } } },
+        .{ .nf = 10, .rf = 0, .frames = .{ .{ 20, 2 }, .{ 21, 2 }, .{ 22, 2 }, .{ 23, 2 }, .{ 24, 2 }, .{ 25, 2 }, .{ 24, 2 }, .{ 23, 2 }, .{ 22, 2 }, .{ 21, 2 } } },
+        .{ .nf = 10, .rf = 0, .frames = .{ .{ 26, 2 }, .{ 27, 2 }, .{ 28, 2 }, .{ 29, 2 }, .{ 30, 2 }, .{ 31, 2 }, .{ 30, 2 }, .{ 29, 2 }, .{ 28, 2 }, .{ 27, 2 } } },
+        .{ .nf = 10, .rf = 0, .frames = .{ .{ 32, 2 }, .{ 33, 2 }, .{ 34, 2 }, .{ 35, 2 }, .{ 36, 2 }, .{ 37, 2 }, .{ 36, 2 }, .{ 35, 2 }, .{ 34, 2 }, .{ 33, 2 } } },
+        .{ .nf = 10, .rf = 0, .frames = .{ .{ 38, 2 }, .{ 39, 2 }, .{ 40, 2 }, .{ 41, 2 }, .{ 42, 2 }, .{ 43, 2 }, .{ 42, 2 }, .{ 41, 2 }, .{ 40, 2 }, .{ 39, 2 } } },
+        .{ .nf = 4, .rf = 0, .frames = .{ .{ 76, 4 }, .{ 77, 4 }, .{ 78, 4 }, .{ 79, 4 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } } },
+    };
+    for (object_rows, 0..) |row, i| {
+        object_anims[i].num_frames = row.nf;
+        object_anims[i].restart_frame = row.rf;
+        for (row.frames, 0..) |fr, f| {
+            object_anims[i].frame[f].image = fr[0];
+            object_anims[i].frame[f].ticks = fr[1];
+        }
+    }
+}
+
 // Weak fallback definitions for the extern world mirrors, used when this
 // module is its own test root (standalone `zig build test`); a difftest or
 // game-loop link supplies the shared harness storage instead, and the

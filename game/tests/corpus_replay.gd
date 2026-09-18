@@ -31,12 +31,17 @@ static func inputs_from_keys(keys: Array) -> Dictionary:
 
 
 ## Replays every line of `jsonl_text` against a freshly-initialized SimWorld
-## seeded with `level_bytes`. Returns {"ok": bool, "message": String,
+## seeded with `level_bytes`. `player_count`/`player_ai_mask`/`no_gore` mirror the
+## corpus meta.json's headless_players/headless_ai_mask fields, forwarded
+## straight to SimWorld.init() (TASK-018), which enables/positions/AI-masks
+## those players and seeds the level's springs/butterflies before the first
+## replayed tick -- the same setup core/game_loop_difftest.zig's own Tier-B
+## replay performs manually. Returns {"ok": bool, "message": String,
 ## "frame": int} -- frame is the first mismatching/failing frame, or -1 if
 ## every frame matched.
-static func replay(jsonl_text: String, seed: int, flies_enabled: bool, level_bytes: PackedByteArray) -> Dictionary:
+static func replay(jsonl_text: String, seed: int, flies_enabled: bool, level_bytes: PackedByteArray, player_count: int = 0, player_ai_mask: int = 0, no_gore: bool = false) -> Dictionary:
 	var world := SimWorld.new()
-	var init_result := world.init(seed, flies_enabled, level_bytes)
+	var init_result := world.init(seed, flies_enabled, level_bytes, player_count, player_ai_mask, no_gore)
 	if init_result != SimWorld.OK:
 		return {"ok": false, "message": "init() failed (result %d)" % init_result, "frame": -1}
 

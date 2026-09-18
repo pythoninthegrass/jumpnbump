@@ -6,21 +6,17 @@
 //! `"std"`. Without that guard Tier-C silently degrades into a second copy
 //! of Tier-A.
 //!
-//! Known gap this suite documents rather than hides: `jnb_world_init`
-//! (TASK-012.02) seeds the RNG and parses the level into `ban_map`, but does
-//! not replicate main.c's/core/game_loop_difftest.zig's full headless-init
-//! sequence (position_player() to enable + place each player, seedLevelObjects()
-//! to spawn springs/butterflies, spawn_flies()) — there is no ABI call for
-//! any of that yet. So a freshly-initialized world has every player
-//! `enabled == 0`, and core/steer.zig's steer_players() skips disabled
-//! players entirely: stepping such a world is a real, well-defined tick
-//! (rnd_call_count/frame_num/ban_map all still participate in the checksum)
-//! but produces no player movement and no gameplay events. This suite tests
-//! the ABI surface and its determinism honestly against that real behavior,
-//! rather than fabricating a "gameplay" scenario the current ABI can't
-//! actually produce. A future task that adds a player-enable/level-object
-//! seeding entry point can extend this suite with real movement/event
-//! assertions once that exists.
+//! `jnb_world_init` (TASK-012.02, extended by TASK-018) replicates main.c's
+//! full headless-init sequence (main.c:1549-1598): enable+AI-mask
+//! `config.player_count` players, `position_player()` each one,
+//! `seedLevelObjects()` the level's springs/butterflies, and `spawn_flies()`
+//! if `config.flies_enabled` — all before the first tick. So a
+//! freshly-initialized world already has its level objects seeded and its
+//! configured players enabled/positioned; `makeConfig()` below defaults
+//! `player_count`/`player_ai_mask` to 0 for tests that only care about
+//! ABI plumbing (buffer contracts, error codes, determinism), and
+//! `makeConfigWithPlayers()` opts a test into real enabled players where
+//! that matters (reset semantics, AI-mask wiring).
 const std = @import("std");
 
 const c = @cImport({
@@ -61,12 +57,18 @@ const sample_level_text =
     "1111111111111111111111\n";
 
 fn makeConfig(seed: u32) c.jnb_config {
+    return makeConfigWithPlayers(seed, 0, 0);
+}
+
+fn makeConfigWithPlayers(seed: u32, player_count: u8, player_ai_mask: u8) c.jnb_config {
     return .{
         .abi_version = c.JNB_ABI_VERSION,
         ._pad0 = 0,
         .rng_seed = seed,
         .flies_enabled = 1,
-        ._pad1 = .{ 0, 0, 0 },
+        .player_count = player_count,
+        .player_ai_mask = player_ai_mask,
+        .no_gore = 0,
     };
 }
 
@@ -188,10 +190,21 @@ test "jnb_objects_copy two-call length-then-fill contract" {
         c.jnb_objects_copy(storage.ptr(), &objects, objects.len, &required),
     );
     try std.testing.expectEqual(@as(usize, c.JNB_NUM_OBJECTS), required);
-    // Nothing seeds an object into a freshly-initialized world (no ABI entry
-    // point yet replicates main.c's init_level() object seeding), so every
-    // slot starts unused.
-    for (objects) |o| try std.testing.expectEqual(@as(u8, 0), o.used);
+    // sample_level_text has exactly one spring tile (row 14, col 9) within
+    // seedLevelObjects()'s 16-row scan bound, plus the two yellow and two
+    // pink butterflies init_level() always seeds -- five used slots, first-fit
+    // allocated in that exact order (spring, yel, yel, pink, pink).
+    var used_count: usize = 0;
+    for (objects) |o| {
+        if (o.used != 0) used_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 5), used_count);
+    try std.testing.expectEqual(@as(i32, 0), objects[0].type); // OBJ_SPRING
+    try std.testing.expectEqual(@as(i32, 3), objects[1].type); // OBJ_YEL_BUTFLY
+    try std.testing.expectEqual(@as(i32, 3), objects[2].type); // OBJ_YEL_BUTFLY
+    try std.testing.expectEqual(@as(i32, 4), objects[3].type); // OBJ_PINK_BUTFLY
+    try std.testing.expectEqual(@as(i32, 4), objects[4].type); // OBJ_PINK_BUTFLY
+    for (objects[5..]) |o| try std.testing.expectEqual(@as(u8, 0), o.used);
 }
 
 test "jnb_world_dump two-call length-then-fill contract" {
@@ -362,45 +375,177 @@ test "jnb_player_view_get rejects an out-of-range player and reports a disabled 
         @as(c.jnb_result, c.JNB_OK),
         c.jnb_player_view_get(storage.ptr(), 0, &view),
     );
-    // No ABI entry point yet enables a player (see the file header comment),
-    // so a freshly-initialized world's player 0 is unenabled and untouched.
+    // makeConfig() defaults to zero enabled players, so a freshly-initialized
+    // world's player 0 is unenabled and untouched.
     try std.testing.expectEqual(@as(u8, 0), view.enabled);
     try std.testing.expectEqual(@as(u8, 0), view.dead_flag);
 }
 
-test "jnb_world_reset clears players/objects/frame_num/events but keeps the level and RNG stream" {
+test "jnb_world_init enables and positions config.player_count players, applies player_ai_mask" {
     var storage: StorageBuf = .{};
-    const config = makeConfig(1);
+    // Players 0 and 2 AI-driven (bits 0 and 2 set), player 1 manual;
+    // player 3 left disabled (player_count=3).
+    const config = makeConfigWithPlayers(1, 3, 0b101);
     try initOk(&storage, &config);
 
-    const inputs: c.jnb_input = .{ .left = 0, .right = 1, .jump = 0, ._pad = 0 };
+    var view: c.jnb_player_view = undefined;
+    inline for (0..3) |p| {
+        try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_player_view_get(storage.ptr(), p, &view));
+        try std.testing.expectEqual(@as(u8, 1), view.enabled);
+        // position_player() sets jump_ready=1; a player that was never
+        // positioned keeps the zeroed default -- this is how the test
+        // observes "position_player ran" through the ABI's view struct
+        // without a raw internal field read.
+        try std.testing.expectEqual(@as(u8, 1), view.jump_ready);
+    }
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_player_view_get(storage.ptr(), 3, &view));
+    try std.testing.expectEqual(@as(u8, 0), view.enabled);
+    try std.testing.expectEqual(@as(u8, 0), view.jump_ready);
+
+    // AI-mask actually changes simulation behavior: an AI-driven player 0
+    // fed all-zero manual input still acts through cpu_move() every tick
+    // (cpu_move() needs another enabled player to chase, hence two players
+    // here), while the identical seed/level with player 0 NOT AI-driven
+    // only reacts to (absent) manual input -- so their post-step checksums
+    // must diverge, proving player_ai_mask actually reached
+    // core/cpu_move.zig's ai[] rather than being silently ignored.
+    // The ABI's player/object/ban_map storage is a process-wide singleton
+    // (see abi.zig's file header comment) -- every world shares the exact
+    // same underlying globals, distinguished only by each StorageBuf's own
+    // Instance bookkeeping (state/frame_num/events). So the two worlds below
+    // must run to completion (init, step, dump into a LOCAL byte buffer)
+    // one at a time, never interleaved, exactly like this file's other
+    // multi-world determinism tests (e.g. "jnb_step advances..." above) --
+    // interleaving jnb_step calls between two live worlds would silently
+    // step one shared world twice, not two independent ones.
+    const zero_inputs: c.jnb_input = .{ .left = 0, .right = 0, .jump = 0, ._pad = 0 };
+    var ai_dump: [16384]u8 = undefined;
+    var ai_written: usize = 0;
+    {
+        var ai_storage: StorageBuf = .{};
+        try initOk(&ai_storage, &makeConfigWithPlayers(1, 2, 1));
+        var i: usize = 0;
+        while (i < 200) : (i += 1) {
+            try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_step(ai_storage.ptr(), zero_inputs));
+        }
+        try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_dump(ai_storage.ptr(), &ai_dump, ai_dump.len, &ai_written));
+    }
+
+    var manual_dump: [16384]u8 = undefined;
+    var manual_written: usize = 0;
+    {
+        var manual_storage: StorageBuf = .{};
+        try initOk(&manual_storage, &makeConfigWithPlayers(1, 2, 0));
+        var i: usize = 0;
+        while (i < 200) : (i += 1) {
+            try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_step(manual_storage.ptr(), zero_inputs));
+        }
+        try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_dump(manual_storage.ptr(), &manual_dump, manual_dump.len, &manual_written));
+    }
+
+    try std.testing.expect(!std.mem.eql(u8, ai_dump[0..ai_written], manual_dump[0..manual_written]));
+}
+
+/// Reads a little-endian u32 out of a raw jnb_world_dump buffer — legitimate
+/// Tier-C usage of the *documented* dump wire format (docs/checksum-format.md:
+/// frame_num at byte offset 0, rnd_call_count at offset 4), not a reach into
+/// core/world.zig internals.
+fn dumpU32(dump: []const u8, offset: usize) u32 {
+    return std.mem.readInt(u32, dump[offset..][0..4], .little);
+}
+
+test "jnb_world_reset clears players/objects/frame_num/events but keeps the level and RNG stream" {
+    var storage: StorageBuf = .{};
+    // A real enabled/AI-driven player this time (unlike every other test's
+    // makeConfig(seed) default of zero players), so "reset clears players"
+    // is actually exercised against a player that moved, rather than one
+    // that was disabled the whole time.
+    const config = makeConfigWithPlayers(1, 1, 1);
+    try initOk(&storage, &config);
+
+    const inputs: c.jnb_input = .{ .left = 0, .right = 0, .jump = 0, ._pad = 0 };
     var i: usize = 0;
     while (i < 5) : (i += 1) {
         try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_step(storage.ptr(), inputs));
     }
 
+    // Pre-reset: the AI-driven player is enabled, level objects (springs/
+    // butterflies) are seeded, and the RNG stream has advanced past init
+    // (butterfly wobble + AI + flies all draw from it every tick).
+    var pre_view: c.jnb_player_view = undefined;
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_player_view_get(storage.ptr(), 0, &pre_view));
+    try std.testing.expectEqual(@as(u8, 1), pre_view.enabled);
+
+    var pre_dump: [16384]u8 = undefined;
+    var pre_written: usize = 0;
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_dump(storage.ptr(), &pre_dump, pre_dump.len, &pre_written));
+    const rnd_before_reset = dumpU32(pre_dump[0..pre_written], 4);
+
     try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_reset(storage.ptr()));
 
-    // frame_num (folded into the dump) is back to a freshly-initialized
-    // world's value; the RNG stream (rnd_call_count) is NOT reseeded, per
-    // the header's documented reset() contract, so it does not necessarily
-    // match a from-scratch init unless nothing consumed the RNG during the
-    // five steps above (here, with every player disabled, nothing did) —
-    // reset() and a fresh init are only guaranteed to agree when the RNG
-    // stream was untouched, which core/steer.zig's disabled-player skip
-    // guarantees for this specific scenario.
-    var storage2: StorageBuf = .{};
-    try initOk(&storage2, &config);
+    // Players cleared.
+    var post_view: c.jnb_player_view = undefined;
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_player_view_get(storage.ptr(), 0, &post_view));
+    try std.testing.expectEqual(@as(u8, 0), post_view.enabled);
 
-    const need = c.jnb_world_dump_len();
-    var dump: [16384]u8 = undefined;
-    var dump2: [16384]u8 = undefined;
-    var written: usize = 0;
-    var written2: usize = 0;
-    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_dump(storage.ptr(), &dump, dump.len, &written));
-    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_dump(storage2.ptr(), &dump2, dump2.len, &written2));
-    try std.testing.expectEqual(need, written);
-    try std.testing.expectEqualSlices(u8, dump[0..written], dump2[0..written2]);
+    // Objects cleared -- including the springs/butterflies init_level()
+    // seeded, even though reset() does not reseed them.
+    var post_objects: [c.JNB_NUM_OBJECTS]c.jnb_object_view = undefined;
+    var post_required: usize = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_objects_copy(storage.ptr(), &post_objects, post_objects.len, &post_required),
+    );
+    for (post_objects) |o| try std.testing.expectEqual(@as(u8, 0), o.used);
 
+    // Events cleared.
     try std.testing.expectEqual(@as(usize, 0), c.jnb_event_count(storage.ptr()));
+
+    // frame_num cleared -- back to 0xffffffff, the "no tick has completed
+    // yet" sentinel a fresh world also starts at (abi.zig's Instance doc
+    // comment: matching main.c's pre-increment headless_frame_num means 0
+    // is tick 0's own label, not "nothing has run", so those two states
+    // can't share the same stored value). RNG stream NOT reseeded (reset()
+    // itself makes no rnd() calls, so the count immediately after reset
+    // must equal the count immediately before it), and the level's ban_map
+    // bytes unchanged.
+    var post_dump: [16384]u8 = undefined;
+    var post_written: usize = 0;
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_dump(storage.ptr(), &post_dump, post_dump.len, &post_written));
+    try std.testing.expectEqual(@as(u32, 0xffffffff), dumpU32(post_dump[0..post_written], 0));
+    try std.testing.expectEqual(rnd_before_reset, dumpU32(post_dump[0..post_written], 4));
+
+    const ban_map_bytes = @as(usize, c.JNB_BAN_ROWS) * @as(usize, c.JNB_BAN_COLS) * 4;
+    const ban_map_start = pre_written - ban_map_bytes;
+    try std.testing.expectEqualSlices(u8, pre_dump[ban_map_start..pre_written], post_dump[ban_map_start..post_written]);
 }
+
+test "jnb_step reproduces the Phase 1 corpus's real recorded checksum through the real ABI" {
+    // tests/corpus/01-single-player-basic.jsonl's frame-0 line, verbatim
+    // (seed 1, one enabled player, p1_right held, sample_level_text's own
+    // grid -- which is levelmap.zig's sample_16_rows fixture and also
+    // happens to be the real committed data/jumpbump.dat levelmap.txt,
+    // confirmed identical byte-for-byte). game/tests/test_corpus_replay.gd
+    // (TASK-014.07) exercises the FULL 10-trace corpus through the real
+    // GDExtension; this single frame pins the same oracle value at the
+    // Tier-C/ABI-only layer, since Tier-C purity forbids @import-ing
+    // core/game_loop_difftest.zig's own already-passing Tier-B replay of
+    // it. Catches exactly the two defects TASK-018 found: player_count/
+    // player_ai_mask not reaching player enable/position/AI at all, and
+    // frame_num's off-by-one against main.c's pre-increment
+    // headless_emit_checksum() convention (main.c:1386-1391) -- either
+    // regressing flips this checksum.
+    var storage: StorageBuf = .{};
+    try initOk(&storage, &makeConfigWithPlayers(1, 1, 0));
+
+    const inputs: c.jnb_input = .{ .left = 0, .right = 1, .jump = 0, ._pad = 0 };
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_step(storage.ptr(), inputs));
+
+    var dump: [16384]u8 = undefined;
+    var written: usize = 0;
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_world_dump(storage.ptr(), &dump, dump.len, &written));
+    var checksum: u32 = 0;
+    try std.testing.expectEqual(@as(c.jnb_result, c.JNB_OK), c.jnb_checksum(&dump, written, &checksum));
+    try std.testing.expectEqual(@as(u32, 0x1584ec43), checksum);
+}
+

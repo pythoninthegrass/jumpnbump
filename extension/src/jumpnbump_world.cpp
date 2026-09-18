@@ -22,7 +22,7 @@ jnb_world *align_world_ptr(std::vector<uint8_t> &buf) {
 } // namespace
 
 void JumpnbumpWorld::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("init", "rng_seed", "flies_enabled", "level_bytes"), &JumpnbumpWorld::init);
+	ClassDB::bind_method(D_METHOD("init", "rng_seed", "flies_enabled", "level_bytes", "player_count", "player_ai_mask", "no_gore"), &JumpnbumpWorld::init, DEFVAL(0), DEFVAL(0), DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("reset"), &JumpnbumpWorld::reset);
 	ClassDB::bind_method(D_METHOD("step", "left", "right", "jump"), &JumpnbumpWorld::step);
 	ClassDB::bind_method(D_METHOD("pump", "delta_ms", "left", "right", "jump"), &JumpnbumpWorld::pump);
@@ -51,11 +51,14 @@ void JumpnbumpWorld::_bind_methods() {
 	BIND_CONSTANT(JNB_EVENT_SFX_VOLUME);
 }
 
-int JumpnbumpWorld::init(uint32_t rng_seed, bool flies_enabled, const PackedByteArray &level_bytes) {
+int JumpnbumpWorld::init(uint32_t rng_seed, bool flies_enabled, const PackedByteArray &level_bytes, uint8_t player_count, uint8_t player_ai_mask, bool no_gore) {
 	jnb_config config{};
 	config.abi_version = static_cast<uint16_t>(JNB_ABI_VERSION);
 	config.rng_seed = rng_seed;
 	config.flies_enabled = flies_enabled ? 1 : 0;
+	config.player_count = player_count;
+	config.player_ai_mask = player_ai_mask;
+	config.no_gore = no_gore ? 1 : 0;
 
 	size_t align = jnb_world_align();
 	size_t size = jnb_world_size();

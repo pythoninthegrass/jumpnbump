@@ -151,6 +151,52 @@ pub export fn add_object(type_: c_int, x: c_int, y: c_int, x_add: c_int, y_add: 
     }
 }
 
+// BAN_VOID/BAN_SPRING (main.c's ban_map tile enum) and OBJ_ANIM_SPRING —
+// duplicated locally rather than reached through steer.zig, per the
+// playbook's no-@import-between-ported-modules rule (steer.zig already
+// exports pub ban_void/ban_spring at the same numeric values).
+const ban_void: u32 = 0; // BAN_VOID
+const ban_spring: u32 = 4; // BAN_SPRING
+const obj_anim_spring: c_int = 0; // OBJ_ANIM_SPRING
+
+/// init_level()'s object seeding (main.c:2905-2946), verbatim order: an
+/// OBJ_SPRING in every spring tile (16 rows, not 17 -- main.c's own loop
+/// bound), then two yellow and two pink butterflies at random void tiles.
+/// Every rnd() draw here is checksum-significant, so this is the one shared
+/// place a real entry point (core/abi.zig's jnb_world_init,
+/// core/game_loop_difftest.zig's Tier-B corpus replay) calls instead of each
+/// duplicating its own copy of the sequence.
+pub fn seedLevelObjects() void {
+    for (0..16) |r| for (0..world.ban_cols) |c| {
+        if (ban_map_raw[r][c] == ban_spring) {
+            add_object(0, @intCast(c * 16), @intCast(r * 16), 0, 0, obj_anim_spring, 5);
+        }
+    };
+    const obj_yel_butfly_: c_int = @intCast(obj_yel_butfly);
+    const obj_pink_butfly_: c_int = @intCast(obj_pink_butfly);
+    const kinds = [_]c_int{ obj_yel_butfly_, obj_yel_butfly_, obj_pink_butfly_, obj_pink_butfly_ };
+    for (kinds) |kind| {
+        while (true) {
+            const s1: c_int = @intCast(rnd(22));
+            const s2: c_int = @intCast(rnd(16));
+            if (ban_map_raw[@intCast(s2)][@intCast(s1)] == ban_void) {
+                const vx: c_int = (s1 << 4) +% 8;
+                const vy: c_int = (s2 << 4) +% 8;
+                // add_object's y_add and x_add args are both `(rnd(65535) -
+                // 32768) * 2` in main.c; the reference binary evaluates
+                // function arguments right-to-left, so the y_add rnd() call
+                // consumes the RNG stream before the x_add one does. Order
+                // matters for rnd_call_count-driven determinism, so this
+                // mirrors that evaluation order exactly.
+                const vb: c_int = (@as(c_int, @intCast(rnd(65535))) -% 32768) *% 2;
+                const va: c_int = (@as(c_int, @intCast(rnd(65535))) -% 32768) *% 2;
+                add_object(kind, vx, vy, va, vb, 0, 0);
+                break;
+            }
+        }
+    }
+}
+
 /// The C's ban_map[y >> 20][x >> 20] read, kept as an unchecked flat access
 /// like steer.zig's banMapCell: the particles read it at raw (possibly
 /// negative or out-of-range) x >> 20 / y >> 20 indices exactly as main.c does,

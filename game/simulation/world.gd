@@ -24,8 +24,8 @@ const EVENT_SFX_VOLUME := JumpnbumpWorld.JNB_EVENT_SFX_VOLUME
 
 var _world: JumpnbumpWorld = JumpnbumpWorld.new()
 
-func init(rng_seed: int, flies_enabled: bool, level_bytes: PackedByteArray) -> int:
-	return _world.init(rng_seed, flies_enabled, level_bytes)
+func init(rng_seed: int, flies_enabled: bool, level_bytes: PackedByteArray, player_count: int = 0, player_ai_mask: int = 0, no_gore: bool = false) -> int:
+	return _world.init(rng_seed, flies_enabled, level_bytes, player_count, player_ai_mask, no_gore)
 
 func reset() -> int:
 	return _world.reset()

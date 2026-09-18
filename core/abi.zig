@@ -27,7 +27,14 @@
 //! objects/flies/rnd into this one compilation (the same "integration root"
 //! precedent game_loop.zig itself already established for its own Tier-A/B
 //! builds — see core/build.zig's game_loop.zig/game_loop_difftest.zig
-//! wiring). Everything those modules reach via `extern fn` (rnd, add_object,
+//! wiring). This file additionally `@import`s steer.zig/objects.zig/
+//! cpu_move.zig/flies.zig directly (TASK-018) — a compile-graph no-op, since
+//! game_loop.zig already reaches all four transitively, but it names them so
+//! jnb_world_init can call steer.loadDefaultAnims()/steer.position_player(),
+//! objects.seedLevelObjects(), and flies.spawn_flies() to run main.c's own
+//! headless/init_level() setup (main.c:1549-1598) before the first tick,
+//! instead of leaving every player disabled and every level object unseeded
+//! forever. Everything those modules reach via `extern fn` (rnd, add_object,
 //! sfxRecordZ, is_server, player_anims, ...) resolves inside that same
 //! compilation with no extra linking, except the draw-boundary stubs
 //! (add_pob/add_leftovers) and the four world-storage arrays plus no_gore,
@@ -48,6 +55,10 @@ const world = @import("world.zig");
 const levelmap = @import("levelmap.zig");
 const rnd_mod = @import("rnd.zig");
 const game_loop = @import("game_loop.zig");
+const steer = @import("steer.zig");
+const objects_mod = @import("objects.zig");
+const cpu_move_mod = @import("cpu_move.zig");
+const flies_mod = @import("flies.zig");
 
 const max_players = world.max_players;
 const num_objects = world.num_objects;
@@ -125,7 +136,19 @@ pub const Config = extern struct {
     _pad0: u16,
     rng_seed: u32,
     flies_enabled: u8,
-    _pad1: [3]u8,
+    /// Number of players to enable, indices 0..player_count-1 (main.c's own
+    /// headless setup, main.c:1549-1561, only ever enables a contiguous run
+    /// starting at player 0 -- there is no real-game path that enables an
+    /// arbitrary subset). Clamped to [0, JNB_MAX_PLAYERS].
+    player_count: u8,
+    /// Bit i set means player i is AI-controlled (core/cpu_move.zig drives
+    /// it instead of jnb_step/jnb_pump's per-tick input) -- main.c's ai[]
+    /// (main.c:1559). Bits at or past player_count are ignored.
+    player_ai_mask: u8,
+    /// 0 or 1; core/collision.zig's no_gore flag (main.c's `-nogore` CLI
+    /// flag) -- suppresses OBJ_FUR/OBJ_FLESH gore object spawns on a kill
+    /// without changing whether the kill itself happens.
+    no_gore: u8,
 };
 comptime {
     std.debug.assert(@sizeOf(Config) == 12);
@@ -197,12 +220,26 @@ comptime {
 // frame_num it already knows from a corpus trace) — this instance's own
 // counter, incremented once per tick in stepOneTick, is that ABI's home for
 // it.
+//
+// frame_num starts at the wrapping equivalent of -1 (0xffffffff), not 0:
+// main.c's own headless_frame_num (main.c:1386-1391) folds its CURRENT
+// value into a tick's checksum, THEN increments for the next tick --
+// headless_emit_checksum(0) fires for the very first tick, not
+// headless_emit_checksum(1). Starting at 0 and incrementing before use
+// would make jnb_world_dump report frame_num=1 after exactly one jnb_step
+// call, one off from what the same tick's real checksum was folded with.
+// Wrapping -1 + 1 = 0 on the first stepOneTick call reproduces the C's
+// exact numbering; a never-stepped (or just-reset) instance's dump
+// reporting 0xffffffff instead of 0 is the harmless flip side of that same
+// fix -- "no tick has completed yet" isn't the same state as "tick 0 just
+// completed", so they no longer collide on the same stored value.
 const EVENT_QUEUE_CAP: usize = 512;
+const no_ticks_completed: u32 = 0xffffffff;
 
 const Instance = struct {
     state: game_loop.State = .{},
     pump_state: game_loop.PumpState = .{},
-    frame_num: u32 = 0,
+    frame_num: u32 = no_ticks_completed,
     events: [EVENT_QUEUE_CAP]Event = undefined,
     event_head: usize = 0,
     event_len: usize = 0,
@@ -242,7 +279,27 @@ fn toInputs(inp: Input) game_loop.Inputs {
 }
 
 /// Runs exactly one tick and queues the events it produced, in order.
+///
+/// Zeroes every player's 3 keyb[] slots first, matching sdl/interrpt.c's
+/// headless_load_frame_keys() (reached from main.c's `-headless` path,
+/// which recorded the Phase 1 corpus): a jnb_input is a complete per-tick
+/// snapshot, not an incremental key-down/up delta, so nothing should carry
+/// over between calls. This is a no-op for manually-controlled players
+/// (game_loop.zig's applyInputs() unconditionally overwrites their 3 bits
+/// from `inputs` every tick regardless), but it matters for an AI-driven
+/// player: cpu_move() owns that player's keyb bits and reads its own
+/// previous write back for one hysteresis check ("is my jump key still
+/// held") before overwriting them for this tick -- without zeroing first,
+/// that check would see cpu_move()'s OWN prior-tick decision instead of a
+/// fresh snapshot, diverging from the corpus a few dozen ticks into any
+/// AI-driven trace (core/game_loop_difftest.zig's own Tier-B replay
+/// performs this exact same zeroing for the identical reason).
 fn stepOneTick(inst: *Instance, inputs: game_loop.Inputs) void {
+    for (cpu_move_mod.key_pl) |keys| {
+        keyb[@intCast(keys[0] & 0x7f)] = 0;
+        keyb[@intCast(keys[1] & 0x7f)] = 0;
+        keyb[@intCast(keys[2] & 0x7f)] = 0;
+    }
     const events = game_loop.step(&inst.state, inputs);
     inst.frame_num +%= 1;
     for (events.slice()) |ge| {
@@ -279,6 +336,14 @@ export fn jnb_world_init(world_ptr: ?*anyopaque, config: ?*const Config, level_b
     const inst = storageOf(wp);
     inst.* = .{};
 
+    // Mirrors main.c's own startup sequence in order (main.c:1549-1598):
+    // seed the one continuous rnd() stream, load the level's ban_map, reset
+    // player/object state, enable+AI-mask the headless players, position
+    // each enabled player (main.c:2896-2903's init_level() loop),  seed the
+    // level's spring/butterfly objects (init_level()'s own object seeding),
+    // then spawn the fly swarm if enabled -- every one of those last three
+    // steps draws from the same rnd() stream this function just seeded, so
+    // the order is checksum-significant, not cosmetic.
     rnd_mod.seed(cfg.rng_seed);
     player_raw = [_]world.Player{.{}} ** max_players;
     objects_raw = [_]world.Object{.{}} ** num_objects;
@@ -286,6 +351,22 @@ export fn jnb_world_init(world_ptr: ?*anyopaque, config: ?*const Config, level_b
         for (0..ban_cols) |c| ban_map_raw[r][c] = parsed[r][c];
     }
     game_loop.flies_enabled = if (cfg.flies_enabled != 0) 1 else 0;
+    no_gore = if (cfg.no_gore != 0) 1 else 0;
+    steer.loadDefaultAnims();
+
+    const player_count = @min(cfg.player_count, max_players);
+    for (0..player_count) |i| {
+        player_raw[i].enabled = 1;
+        cpu_move_mod.ai[i] = @intCast((cfg.player_ai_mask >> @intCast(i)) & 1);
+    }
+    for (0..player_count) |i| {
+        player_raw[i].bumps = 0;
+        player_raw[i].bumped = [_]c_int{0} ** max_players;
+        steer.position_player(@intCast(i));
+    }
+    objects_mod.seedLevelObjects();
+    if (game_loop.flies_enabled != 0) flies_mod.spawn_flies();
+
     return JNB_OK;
 }
 

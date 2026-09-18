@@ -26,7 +26,7 @@ public:
 	JumpnbumpWorld() = default;
 	~JumpnbumpWorld() override = default;
 
-	int init(uint32_t rng_seed, bool flies_enabled, const PackedByteArray &level_bytes);
+	int init(uint32_t rng_seed, bool flies_enabled, const PackedByteArray &level_bytes, uint8_t player_count = 0, uint8_t player_ai_mask = 0, bool no_gore = false);
 	int reset();
 	int step(int left, int right, int jump);
 	Dictionary pump(int delta_ms, int left, int right, int jump);

@@ -41,11 +41,6 @@ extern var no_gore: c_int;
 
 const player_ptr: *[world.max_players]world.Player = @constCast(&player_raw);
 
-const obj_spring: c_int = 0;
-const obj_yel_butfly: c_int = 3;
-const obj_pink_butfly: c_int = 4;
-const obj_anim_spring: c_int = 0;
-
 /// levelmap.txt, packed inside data/jumpbump.dat, read once and cached:
 /// read_level() (main.c:3586) loads this over the file-scope ban_map[]
 /// static initializer at program start, before any headless setup runs, so
@@ -83,40 +78,7 @@ fn setupWorld(allocator: std.mem.Allocator) !void {
     cpu_move_mod.ai = [_]c_int{0} ** world.max_players;
     game_loop.flies_enabled = 1;
     @memset(&keyb, 0);
-    loadRealPlayerAnims();
-    loadRealObjectAnims();
-}
-
-/// init_level()'s object seeding (main.c:2868-2937), verbatim order: an
-/// OBJ_SPRING in every spring tile (16 rows, not 17 -- main.c's own loop
-/// bound), then two yellow and two pink butterflies at random void tiles.
-/// All draw from the one rnd() stream the trace's seed already started.
-fn seedLevelObjects() void {
-    for (0..16) |r| for (0..world.ban_cols) |c| {
-        if (ban_map_raw[r][c] == steer.ban_spring) {
-            objects_mod.add_object(obj_spring, @intCast(c * 16), @intCast(r * 16), 0, 0, obj_anim_spring, 5);
-        }
-    };
-    const kinds = [_]c_int{ obj_yel_butfly, obj_yel_butfly, obj_pink_butfly, obj_pink_butfly };
-    for (kinds) |kind| {
-        while (true) {
-            const s1: c_int = @intCast(rnd_mod.rnd(22));
-            const s2: c_int = @intCast(rnd_mod.rnd(16));
-            if (ban_map_raw[@intCast(s2)][@intCast(s1)] == steer.ban_void) {
-                const vx: c_int = (s1 << 4) +% 8;
-                const vy: c_int = (s2 << 4) +% 8;
-                // add_object's y_add and x_add args are both `(rnd(65535) - 32768) * 2`
-                // in main.c; the reference binary evaluates function arguments
-                // right-to-left, so the y_add rnd() call consumes the RNG stream
-                // before the x_add one does. Order matters for rnd_call_count-driven
-                // determinism, so this mirrors that evaluation order exactly.
-                const vb: c_int = (@as(c_int, @intCast(rnd_mod.rnd(65535))) -% 32768) *% 2;
-                const va: c_int = (@as(c_int, @intCast(rnd_mod.rnd(65535))) -% 32768) *% 2;
-                objects_mod.add_object(kind, vx, vy, va, vb, 0, 0);
-                break;
-            }
-        }
-    }
+    steer.loadDefaultAnims();
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +183,7 @@ fn replayTrace(allocator: std.mem.Allocator, name: []const u8, mismatches: *usiz
         player_ptr[i].bumped = [_]c_int{0} ** world.max_players;
         steer.position_player(@intCast(i));
     }
-    seedLevelObjects();
+    objects_mod.seedLevelObjects();
     if (game_loop.flies_enabled != 0) flies_mod.spawn_flies();
 
     var state: game_loop.State = .{};
@@ -288,63 +250,8 @@ test "game_loop.step matches the Phase 1 corpus end-to-end, zero checksum mismat
     try std.testing.expectEqual(@as(usize, 0), mismatches);
 }
 
-// player_anims/object_anims are core/steer.zig's own exports
-// (pub export var player_anims/object_anims), loaded once at program start
-// (main.c:3105-3112's player_anim_data[]/main.c:96-171's object_anims
-// static initializer) -- but no core module ports that literal load yet
-// (it lives in main() before init_level(), out of TASK-011.07's scope), so
-// this difftest transcribes both tables directly from main.c itself.
-//
-// NOTE: core/collision_difftest.zig's own loadObjectAnims has transcription
-// errors relative to main.c (smoke's num_frames is 5, not 6; the two pink
-// butterfly rows are their own distinct 32-37/38-43 image ranges, not a
-// copy of yellow's 26-31; flesh_trace is nf=4 with images 76-79, not nf=8
-// with 32-39) that its own tests don't happen to exercise (it never reads
-// a pink butterfly's or flesh_trace's frame images), so this file
-// transcribes the table fresh from main.c rather than copying that one.
-fn loadRealPlayerAnims() void {
-    // main.c:3105's player_anim_data[]: num_frames, restart_frame, then 4
-    // (image, ticks) pairs per row, flat.
-    const data = [_]c_int{
-        1, 0, 0, 0x7fff, 0, 0, 0, 0, 0, 0,
-        4, 0, 0, 4, 1, 4, 2, 4, 3, 4,
-        1, 0, 4, 0x7fff, 0, 0, 0, 0, 0, 0,
-        4, 2, 5, 8, 6, 10, 7, 3, 6, 3,
-        1, 0, 6, 0x7fff, 0, 0, 0, 0, 0, 0,
-        2, 1, 5, 8, 4, 0x7fff, 0, 0, 0, 0,
-        1, 0, 8, 5, 0, 0, 0, 0, 0, 0,
-    };
-    for (0..7) |a| {
-        steer.player_anims[a].num_frames = data[a * 10];
-        steer.player_anims[a].restart_frame = data[a * 10 + 1];
-        for (0..4) |f| {
-            steer.player_anims[a].frame[f].image = data[a * 10 + f * 2 + 2];
-            steer.player_anims[a].frame[f].ticks = data[a * 10 + f * 2 + 3];
-        }
-    }
-}
-
-fn loadRealObjectAnims() void {
-    // main.c:96-171's object_anims[8] static initializer, transcribed row
-    // for row: spring, splash, smoke, yel_butfly_right, yel_butfly_left,
-    // pink_butfly_right, pink_butfly_left, flesh_trace.
-    const Row = struct { nf: c_int, rf: c_int, frames: [10][2]c_int };
-    const rows = [_]Row{
-        .{ .nf = 6, .rf = 0, .frames = .{ .{ 0, 3 }, .{ 1, 3 }, .{ 2, 3 }, .{ 3, 3 }, .{ 4, 3 }, .{ 5, 3 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } } },
-        .{ .nf = 9, .rf = 0, .frames = .{ .{ 6, 2 }, .{ 7, 2 }, .{ 8, 2 }, .{ 9, 2 }, .{ 10, 2 }, .{ 11, 2 }, .{ 12, 2 }, .{ 13, 2 }, .{ 14, 2 }, .{ 0, 0 } } },
-        .{ .nf = 5, .rf = 0, .frames = .{ .{ 15, 3 }, .{ 16, 3 }, .{ 16, 3 }, .{ 17, 3 }, .{ 18, 3 }, .{ 19, 3 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } } },
-        .{ .nf = 10, .rf = 0, .frames = .{ .{ 20, 2 }, .{ 21, 2 }, .{ 22, 2 }, .{ 23, 2 }, .{ 24, 2 }, .{ 25, 2 }, .{ 24, 2 }, .{ 23, 2 }, .{ 22, 2 }, .{ 21, 2 } } },
-        .{ .nf = 10, .rf = 0, .frames = .{ .{ 26, 2 }, .{ 27, 2 }, .{ 28, 2 }, .{ 29, 2 }, .{ 30, 2 }, .{ 31, 2 }, .{ 30, 2 }, .{ 29, 2 }, .{ 28, 2 }, .{ 27, 2 } } },
-        .{ .nf = 10, .rf = 0, .frames = .{ .{ 32, 2 }, .{ 33, 2 }, .{ 34, 2 }, .{ 35, 2 }, .{ 36, 2 }, .{ 37, 2 }, .{ 36, 2 }, .{ 35, 2 }, .{ 34, 2 }, .{ 33, 2 } } },
-        .{ .nf = 10, .rf = 0, .frames = .{ .{ 38, 2 }, .{ 39, 2 }, .{ 40, 2 }, .{ 41, 2 }, .{ 42, 2 }, .{ 43, 2 }, .{ 42, 2 }, .{ 41, 2 }, .{ 40, 2 }, .{ 39, 2 } } },
-        .{ .nf = 4, .rf = 0, .frames = .{ .{ 76, 4 }, .{ 77, 4 }, .{ 78, 4 }, .{ 79, 4 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } } },
-    };
-    for (rows, 0..) |row, i| {
-        steer.object_anims[i].num_frames = row.nf;
-        steer.object_anims[i].restart_frame = row.rf;
-        for (row.frames, 0..) |fr, f| {
-            steer.object_anims[i].frame[f].image = fr[0];
-            steer.object_anims[i].frame[f].ticks = fr[1];
-        }
-    }
-}
+// player_anims/object_anims are loaded via steer.loadDefaultAnims() (moved
+// there from this file's own local transcription so core/abi.zig's
+// jnb_world_init can share the exact same table load -- see steer.zig's
+// doc comment for the full main.c provenance and the collision_difftest.zig
+// transcription-error note this used to carry).

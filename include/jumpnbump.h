@@ -145,7 +145,19 @@ typedef struct jnb_config {
     uint16_t _pad0;        /* specified-zero; pads rng_seed to a 4-byte offset */
     uint32_t rng_seed;     /* core/rnd.zig's seed(); must be nonzero */
     uint8_t flies_enabled; /* 0 or 1; core/game_loop.zig's flies_enabled flag */
-    uint8_t _pad1[3];      /* specified-zero; reserved for future config growth */
+    /* Number of players jnb_world_init enables, indices 0..player_count-1
+     * (main.c's own headless setup, main.c:1549-1561, only ever enables a
+     * contiguous run starting at player 0). Clamped to
+     * [0, JNB_MAX_PLAYERS]. */
+    uint8_t player_count;
+    /* Bit i set means player i is AI-controlled (core/cpu_move.zig drives
+     * it instead of jnb_step/jnb_pump's per-tick input) -- main.c's ai[]
+     * (main.c:1559). Bits at or past player_count are ignored. */
+    uint8_t player_ai_mask;
+    /* 0 or 1; core/collision.zig's no_gore flag (main.c's `-nogore` CLI
+     * flag) -- suppresses OBJ_FUR/OBJ_FLESH gore object spawns on a kill
+     * without changing whether the kill itself happens. */
+    uint8_t no_gore;
 } jnb_config;
 JNB_STATIC_ASSERT(sizeof(jnb_config) == 12, "jnb_config layout changed");
 
@@ -250,10 +262,19 @@ size_t jnb_world_size(void);
 size_t jnb_world_align(void);
 
 /* Initializes caller-supplied storage (jnb_world_size() bytes, aligned to
- * jnb_world_align()) as a fresh world: seeds the RNG stream from
- * config->rng_seed (core/rnd.zig's seed()), parses level_bytes (raw
+ * jnb_world_align()) as a fresh world, replicating main.c's own headless
+ * startup sequence in order (main.c:1549-1598): seeds the RNG stream from
+ * config->rng_seed (core/rnd.zig's seed()); parses level_bytes (raw
  * levelmap.txt-format content, core/levelmap.zig's parse()) into the
- * simulation's ban_map, and resets player/object state.
+ * simulation's ban_map; resets player/object state; enables
+ * config->player_count players (indices 0..player_count-1) and sets their
+ * AI bit from config->player_ai_mask; positions each enabled player
+ * (main.c's position_player(), avoiding overlap with already-positioned
+ * players); seeds the level's spring/butterfly objects (main.c's
+ * init_level() object seeding); and spawns the fly swarm if
+ * config->flies_enabled. The last three steps draw from the same rnd()
+ * stream this call just seeded, so a caller that needs bit-for-bit parity
+ * with a recorded trace must not skip or reorder them.
  *
  * Returns JNB_ERR_ABI_VERSION_MISMATCH if config->abi_version !=
  * JNB_ABI_VERSION, JNB_ERR_INVALID_ARGUMENT if config->rng_seed == 0,
