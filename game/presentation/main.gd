@@ -30,19 +30,49 @@ const SAMPLE_LEVEL_TEXT := (
 	"1111111111111111111111\n"
 )
 
-## Level layer paths are hardcoded here as a placeholder: real level
-## selection/scaling/letterboxing is TASK-014.04's job. This task
-## (TASK-014.03) only needs background-under-sprites,
-## masked-foreground-over-sprites ordering to exist and be verifiable.
+## Level layer paths: TASK-014.04 composites the "level" pair from
+## game/content/levels/manifest.json (TASK-013.02) at the original 400x256
+## design resolution. Real level selection (menu vs. level, custom .dat
+## levels) is TASK-016's job; this hardcodes the "level" entry.
 const LEVEL_BACKGROUND := "res://content/levels/level_background.png"
 const LEVEL_FOREGROUND := "res://content/levels/level_foreground.png"
+
+## The original design resolution (main.c's SCREEN_WIDTH/SCREEN_HEIGHT).
+## game/project.godot's viewport_width/height mirror these for the
+## canvas_items/keep stretch base; DESIGN_SIZE is the code-side source of
+## truth used to size the actual OS window (AC#3).
+const DESIGN_SIZE := Vector2i(400, 256)
+
+## Initial window size is an integer multiple of DESIGN_SIZE so canvas_items
+## stretch starts pixel-perfect rather than needing non-integer upscaling;
+## the user can still freely resize afterwards, and keep-aspect stretch mode
+## (project.godot) letterboxes any resulting non-integer or mismatched-aspect
+## window size rather than distorting it.
+const WINDOW_SCALE := 2
 
 var _world: SimWorld
 var _gate := false
 var _sprite_renderer: SpriteRenderer
 
 
+## Pure function (no Window/DisplayServer access) so window-sizing math is
+## unit-testable without a live window, matching neo_snake's
+## GameScreen._ready() pattern of deriving window size from the design size
+## and the current screen's display scale rather than hardcoding it in
+## project.godot.
+static func compute_window_size(design_size: Vector2i, scale: int, display_scale: float) -> Vector2i:
+	return Vector2i(Vector2(design_size * scale) * display_scale)
+
+
+func _apply_window_size() -> void:
+	var screen := DisplayServer.window_get_current_screen()
+	var display_scale := DisplayServer.screen_get_scale(screen)
+	get_window().size = compute_window_size(DESIGN_SIZE, WINDOW_SCALE, display_scale)
+
+
 func _ready() -> void:
+	_apply_window_size()
+
 	_world = SimWorld.new()
 	var result := _world.init(1, false, SAMPLE_LEVEL_TEXT.to_utf8_buffer())
 	_gate = result == SimWorld.OK
