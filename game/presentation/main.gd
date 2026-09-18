@@ -50,10 +50,19 @@ const DESIGN_SIZE := Vector2i(400, 256)
 ## window size rather than distorting it.
 const WINDOW_SCALE := 2
 
+## Drained events are read back at most this many per frame; comfortably
+## above core/game_loop.zig's own max_events_per_tick times a worst-case
+## catch-up tick count for a single _process() call.
+const EVENT_DRAIN_CAPACITY := 256
+
 var _world: SimWorld
 var _gate := false
 var _sprite_renderer: SpriteRenderer
 var _scoreboard_renderer: ScoreboardRenderer
+var _sfx_player: SfxPlayer
+var _music_player: MusicPlayer
+var _app_lifecycle: AppLifecycle
+var _audio_settings: AudioSettings
 
 
 ## Pure function (no Window/DisplayServer access) so window-sizing math is
@@ -104,8 +113,44 @@ func _ready() -> void:
 	add_child(_scoreboard_renderer)
 	_scoreboard_renderer.setup(_world)
 
+	_sfx_player = SfxPlayer.new()
+	_sfx_player.name = "SfxPlayer"
+	add_child(_sfx_player)
+
+	_music_player = MusicPlayer.new()
+	_music_player.name = "MusicPlayer"
+	add_child(_music_player)
+	_music_player.play("game")
+
+	_audio_settings = AudioSettings.new()
+	AudioSettings.apply_to_audio_server(_audio_settings.load_or_default())
+
+	# Stops music before the app actually quits (TASK-014.06 AC#4) --
+	# added as a child, not called directly, so _notification receives the
+	# real NOTIFICATION_WM_CLOSE_REQUEST the engine delivers to nodes.
+	_app_lifecycle = AppLifecycle.new(Callable(_music_player, "stop"))
+	_app_lifecycle.name = "AppLifecycle"
+	add_child(_app_lifecycle)
+
 
 func _process(delta: float) -> void:
 	if _world == null:
 		return
 	TickDriver.advance_frame(_world, delta * 1000.0, true, _gate)
+	_drain_audio_events()
+
+
+## Draining once per frame (not per tick) is what makes SfxEventCoalescer's
+## per-frame dedup (AC#3) actually apply: a hitch that runs several ticks
+## inside one TickDriver.advance_frame call above still only reaches this
+## drain-and-play step once.
+func _drain_audio_events() -> void:
+	var drain: Dictionary = _world.event_drain(EVENT_DRAIN_CAPACITY)
+	if drain.get("result", -1) != SimWorld.OK:
+		return
+	var events: Array = drain.get("events", [])
+	for cue in SfxEventCoalescer.cues_for(events):
+		_sfx_player.play(cue)
+	var fly_events := SfxEventCoalescer.fly_volume_events_in(events)
+	if not fly_events.is_empty():
+		_sfx_player.apply_fly_volume(fly_events[-1]["volume"])
