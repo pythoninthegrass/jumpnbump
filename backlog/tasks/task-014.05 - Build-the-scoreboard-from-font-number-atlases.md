@@ -1,9 +1,10 @@
 ---
 id: TASK-014.05
 title: Build the scoreboard from font/number atlases
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-15 19:16'
+updated_date: '2026-09-18 00:27'
 labels: []
 milestone: m-5
 dependencies: []
@@ -21,6 +22,6 @@ Render in-game score/text using the font.gob and numbers.gob atlases produced by
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Player scores render correctly using the numbers atlas during and after a match
-- [ ] #2 Any in-game text (e.g. player labels) renders correctly using the font atlas
+- [x] #1 Player scores render correctly using the numbers atlas during and after a match
+- [x] #2 Any in-game text (e.g. player labels) renders correctly using the font atlas
 <!-- AC:END -->
