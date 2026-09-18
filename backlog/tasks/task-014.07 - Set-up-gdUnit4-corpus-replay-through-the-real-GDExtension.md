@@ -1,9 +1,10 @@
 ---
 id: TASK-014.07
 title: Set up gdUnit4 corpus replay through the real GDExtension
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-09-15 19:16'
+updated_date: '2026-09-18 00:48'
 labels: []
 milestone: m-5
 dependencies: []
@@ -22,6 +23,12 @@ Bootstrap gdUnit4 (matching neo_snake's tools/bootstrap.py pattern, gitignored a
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 task game:test runs headlessly via godot --headless and passes
-- [ ] #2 test_gdextension_present fails clearly if the GDExtension fails to load
+- [x] #2 test_gdextension_present fails clearly if the GDExtension fails to load
 - [ ] #3 Every trace in the Phase 1 corpus replays through the real GDExtension with matching checksums frame-for-frame
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Harness built and correct (gdUnit4 bootstrapped, canary + corpus replay suite in place), but AC#1 (task game:test passes) and AC#3 (every trace matches checksums) genuinely fail: core/abi.zig's jnb_world_init never enables/positions any player or seeds level objects, so all 10 corpus traces diverge from frame 0. This is a pre-existing gap in already-Done TASK-012.02, not fixable within this subtask's scope. Filed as TASK-018 (blocking). test_every_corpus_trace_replays_with_matching_checksums is left genuinely red (not skipped/loosened) until TASK-018 lands. AC#2 (canary fails clearly) is met with a minor caveat: GDScript's parse-time class-constant resolution means removing the .so aborts test discovery for all JumpnbumpWorld-dependent files at once, not narrowly isolated to test_gdextension_present alone -- but the failure is immediate and unambiguous either way.
+<!-- SECTION:NOTES:END -->
