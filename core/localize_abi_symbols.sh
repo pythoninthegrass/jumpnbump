@@ -34,6 +34,31 @@ archive="$1"
 header="$2"
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# GNU objcopy isn't part of Xcode/Command Line Tools on macOS (only
+# clang/lld's own toolchain), so on that platform this needs LLVM's
+# objcopy (`brew install llvm`, keg-only so not on PATH by default) or
+# Homebrew's GNU binutils (`brew install binutils`, whose `gobjcopy` is
+# unprefixed to avoid clashing with the system's own `as`/`ld`). Both
+# accept the same --keep-global-symbols flag GNU objcopy does.
+objcopy=""
+for candidate in objcopy llvm-objcopy gobjcopy; do
+	if command -v "$candidate" >/dev/null 2>&1; then
+		objcopy=$candidate
+		break
+	fi
+done
+if [ -z "$objcopy" ] && command -v brew >/dev/null 2>&1; then
+	llvm_prefix=$(brew --prefix llvm 2>/dev/null || true)
+	if [ -n "$llvm_prefix" ] && [ -x "$llvm_prefix/bin/llvm-objcopy" ]; then
+		objcopy="$llvm_prefix/bin/llvm-objcopy"
+	fi
+fi
+if [ -z "$objcopy" ]; then
+	echo "error: no objcopy-compatible tool found (objcopy, llvm-objcopy, or gobjcopy)." >&2
+	echo "       on macOS: brew install llvm (or binutils), then retry." >&2
+	exit 1
+fi
+
 archive_abspath=$(CDPATH= cd -- "$(dirname -- "$archive")" && pwd)/$(basename -- "$archive")
 
 # mktemp's default TMPDIR (/tmp) isn't guaranteed writable/executable in
@@ -49,7 +74,7 @@ python3 "$script_dir/../tools/generate_abi_symbols.py" "$header" > "$symbols"
 # via any other tool touching the extracted files directly).
 chmod u+rw "$workdir"/*.o
 ld -r "$workdir"/*.o -o "$workdir/merged.o"
-objcopy --keep-global-symbols="$symbols" "$workdir/merged.o"
+"$objcopy" --keep-global-symbols="$symbols" "$workdir/merged.o"
 
 rm -f "$archive_abspath"
 (cd "$workdir" && ar rcs "$archive_abspath" merged.o)
