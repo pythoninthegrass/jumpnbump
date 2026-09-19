@@ -66,7 +66,19 @@ archive_abspath=$(CDPATH= cd -- "$(dirname -- "$archive")" && pwd)/$(basename --
 symbols=$(mktemp -p "$(dirname -- "$archive_abspath")")
 workdir=$(mktemp -d -p "$(dirname -- "$archive_abspath")")
 trap 'rm -f "$symbols"; rm -rf "$workdir"' EXIT
-python3 "$script_dir/../tools/generate_abi_symbols.py" "$header" > "$symbols"
+# Mach-O symbol tables store C symbols with a leading underscore (the
+# platform's own name-mangling convention, e.g. `_jnb_step`), while ELF's do
+# not. --keep-global-symbols matches literal symbol-table names, so on
+# Darwin the generated jnb_* names need that underscore prepended or every
+# entry silently fails to match -- objcopy then falls back to its default
+# (no symbols preserved) and localizes the jnb_ ABI surface right along with
+# everything else. This bit us for real: TASK-012.05's macOS GDExtension
+# link failed with every jnb_* symbol "undefined", not just non-ABI ones.
+if [ "$(uname -s)" = "Darwin" ]; then
+	python3 "$script_dir/../tools/generate_abi_symbols.py" "$header" | sed 's/^/_/' > "$symbols"
+else
+	python3 "$script_dir/../tools/generate_abi_symbols.py" "$header" > "$symbols"
+fi
 
 (cd "$workdir" && ar x "$archive_abspath")
 # Zig's own archiver stores members with mode 000 (readable via `ar x`
