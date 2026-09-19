@@ -19,6 +19,7 @@
 const std = @import("std");
 const gob = @import("gob.zig");
 const pcx = @import("pcx.zig");
+const asset_runtime = @import("asset_runtime.zig");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -61,14 +62,6 @@ fn usage() noreturn {
     std.process.exit(1);
 }
 
-// sdl/gfx.c set_palette: colors[i].r = palette[i*3+0] << 2 -- undoes
-// pcx.zig's decode()'s `>> 2` VGA scaling back to a displayable 8-bit value.
-fn scalePalette(raw: [pcx.palette_size]u8) [pcx.palette_size]u8 {
-    var out: [pcx.palette_size]u8 = undefined;
-    for (&out, raw) |*o, r| o.* = r << 2;
-    return out;
-}
-
 fn writeJson(io: std.Io, dir: std.Io.Dir, path: []const u8, json: []const u8) !void {
     try dir.writeFile(io, .{ .sub_path = path, .data = json });
 }
@@ -88,7 +81,7 @@ fn dumpGob(
     const pal_bytes = try dir.readFileAlloc(io, palette_path, gpa, .unlimited);
     var decoded_pal = try pcx.decode(gpa, pal_bytes, @as(usize, 400) * 256, true);
     defer decoded_pal.deinit();
-    const palette = scalePalette(decoded_pal.palette.?);
+    const palette = asset_runtime.scaleDisplayPalette(decoded_pal.palette.?);
 
     const palette_path_out = try std.fmt.allocPrint(gpa, "{s}/palette.rgb", .{out_dir});
     try dir.writeFile(io, .{ .sub_path = palette_path_out, .data = &palette });
@@ -133,7 +126,7 @@ fn dumpPcx(
     var has_palette = false;
     if (with_palette) {
         if (decoded.palette) |raw_pal| {
-            const palette = scalePalette(raw_pal);
+            const palette = asset_runtime.scaleDisplayPalette(raw_pal);
             const pal_path = try std.fmt.allocPrint(gpa, "{s}/{s}.palette.rgb", .{ out_dir, out_stem });
             try dir.writeFile(io, .{ .sub_path = pal_path, .data = &palette });
             has_palette = true;

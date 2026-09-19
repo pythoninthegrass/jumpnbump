@@ -65,8 +65,12 @@ extern "C" {
 
 /* Bump on any change to this header's function signatures, calling
  * convention, or exported semantics. Every binding must be rebuilt and
- * relinked when this changes. */
-#define JNB_ABI_VERSION 1u
+ * relinked when this changes.
+ *
+ * 2: added the jnb_dat_find / jnb_gob_... / jnb_level_layers_... surface
+ * (TASK-016.01, runtime .dat asset decoding) alongside the pre-existing
+ * jnb_world_... simulation surface. jnb_config's own layout is unchanged. */
+#define JNB_ABI_VERSION 2u
 
 /* core/world.zig's fixed simulation dimensions (JNB_MAX_PLAYERS,
  * NUM_OBJECTS, and the ban_map's 17x22 grid — 17 rows because
@@ -76,6 +80,14 @@ extern "C" {
 #define JNB_NUM_OBJECTS 200u
 #define JNB_BAN_ROWS 17u
 #define JNB_BAN_COLS 22u
+
+/* core/asset_runtime.zig's fixed asset dimensions (TASK-016.01): main.c's
+ * screen resolution (sdl/gfx.c), which every level/menu PCX pair and every
+ * sprite atlas this ABI builds is packed into. */
+#define JNB_ASSET_SCREEN_W 400u
+#define JNB_ASSET_SCREEN_H 256u
+#define JNB_ASSET_RGBA_LEN (JNB_ASSET_SCREEN_W * JNB_ASSET_SCREEN_H * 4u)
+#define JNB_ASSET_PALETTE_SIZE 768u
 
 /* ---------------------------------------------------------------------- */
 /* Result codes                                                           */
@@ -103,6 +115,14 @@ enum {
     /* jnb_world_init was given level bytes core/levelmap.zig's parser
      * could not read (truncated levelmap.txt content). */
     JNB_ERR_LEVEL_PARSE_FAILED = 4,
+    /* jnb_dat_find found no entry whose name prefix-matches the query
+     * (core/dat.zig's prefixMatch semantics -- see jnb_dat_find). */
+    JNB_ERR_ASSET_NOT_FOUND = 5,
+    /* A .gob/.pcx buffer was malformed or truncated (core/gob.zig's or
+     * core/pcx.zig's DecodeError), or a .gob's frames don't fit the fixed
+     * JNB_ASSET_SCREEN_W x JNB_ASSET_SCREEN_H atlas grid
+     * (core/asset_runtime.zig's TooManyFrames). */
+    JNB_ERR_ASSET_DECODE_FAILED = 6,
 };
 
 /* ---------------------------------------------------------------------- */
@@ -362,6 +382,105 @@ size_t jnb_event_count(const jnb_world *world);
  * 256 events in a single tick, an existing Phase 3 limit this ABI does
  * not change). */
 jnb_result jnb_event_drain(jnb_world *world, jnb_event *out_events, size_t out_capacity, size_t *out_count);
+
+/* ---------------------------------------------------------------------- */
+/* Runtime .dat asset decoding (TASK-016.01)                               */
+/*                                                                         */
+/* Pure buffer-in/buffer-out functions: no world, no allocation visible to */
+/* the caller, no file I/O. A consumer (the GDExtension shim) reads a      */
+/* custom .dat's raw bytes itself, uses jnb_dat_find to locate each named  */
+/* entry inside it, and feeds those entry bytes to the gob/pcx functions   */
+/* below to get back RGBA8 pixel buffers ready to wrap in a Godot Image -- */
+/* the same atlas/layer layout tools/build_sprite_atlas.py and             */
+/* tools/build_level_layers.py produce at build time (core/asset_runtime.zig */
+/* is the single implementation both share).                              */
+/* ---------------------------------------------------------------------- */
+
+/* One packed sprite frame's placement inside the RGBA8 atlas jnb_gob_atlas_build
+ * writes, plus its hotspot (core/gob.zig's Image.hs_x/hs_y, sign preserved). */
+typedef struct jnb_atlas_frame {
+    int32_t x;
+    int32_t y;
+    int32_t width;
+    int32_t height;
+    int32_t hotspot_x;
+    int32_t hotspot_y;
+} jnb_atlas_frame;
+JNB_STATIC_ASSERT(sizeof(jnb_atlas_frame) == 24, "jnb_atlas_frame layout changed");
+
+/* dat_open/dat_filelen (main.c): find the .dat entry whose 12-byte name
+ * field case-insensitively PREFIX-matches `name` (core/dat.zig's
+ * prefixMatch -- not equality; "menu" matches "menumask.pcx"), and report
+ * its byte offset/size within `buf`. Returns JNB_ERR_ASSET_NOT_FOUND if no
+ * entry matches (out_offset/out_size left unmodified in that case). */
+jnb_result jnb_dat_find(const uint8_t *buf, size_t buf_len, const char *name, size_t name_len, size_t *out_offset, size_t *out_size);
+
+/* Number of images a .gob buffer decodes to (core/gob.zig's decode()),
+ * without building an atlas -- use this to size out_frames before calling
+ * jnb_gob_atlas_build. Returns JNB_ERR_ASSET_DECODE_FAILED if gob_buf is
+ * malformed or truncated. */
+jnb_result jnb_gob_frame_count(const uint8_t *gob_buf, size_t gob_len, size_t *out_count);
+
+/* Decodes menu.pcx's embedded palette, display-scaled (core/asset_runtime.zig's
+ * scaleDisplayPalette -- undoes core/pcx.zig's VGA 6-bit DAC read-side
+ * scaling), into out_palette_rgb768 (exactly JNB_ASSET_PALETTE_SIZE bytes).
+ * main.c loads menu.pcx once at startup and shares that single palette
+ * across rabbit.gob/objects.gob/numbers.gob/font.gob, so decode it once per
+ * .dat and reuse the result for every jnb_gob_atlas_build call against that
+ * .dat. Returns JNB_ERR_INVALID_ARGUMENT if palette_capacity !=
+ * JNB_ASSET_PALETTE_SIZE, or JNB_ERR_ASSET_DECODE_FAILED if pcx_buf is
+ * malformed, truncated, or carries no palette. */
+jnb_result jnb_pcx_palette_decode(const uint8_t *pcx_buf, size_t pcx_len, uint8_t *out_palette_rgb768, size_t palette_capacity);
+
+/* Decodes a .gob sprite sheet and packs every frame into a single
+ * JNB_ASSET_SCREEN_W x JNB_ASSET_SCREEN_H RGBA8 atlas (core/asset_runtime.zig's
+ * buildSpriteAtlas -- a uniform tile grid sized to the .gob's largest frame,
+ * color index 0 transparent). palette_rgb768 must be JNB_ASSET_PALETTE_SIZE
+ * display-scaled bytes, e.g. jnb_pcx_palette_decode's output for the same
+ * .dat's menu.pcx.
+ *
+ * Two-call length-then-fill contract for out_frames, matching
+ * jnb_objects_copy: pass out_frames == NULL (or frames_capacity == 0) to
+ * learn the required length via *out_frame_count without decoding pixels.
+ * Pass a real buffer of at least that length, plus an out_pixels buffer of
+ * exactly JNB_ASSET_RGBA_LEN bytes, to build the atlas. Returns
+ * JNB_ERR_BUFFER_TOO_SMALL (still setting *out_frame_count) if
+ * frames_capacity is smaller than required, JNB_ERR_INVALID_ARGUMENT if
+ * out_frames is non-NULL but pixels_capacity != JNB_ASSET_RGBA_LEN, and
+ * JNB_ERR_ASSET_DECODE_FAILED if gob_buf is malformed, truncated, or its
+ * frames don't fit the fixed atlas grid. */
+jnb_result jnb_gob_atlas_build(
+    const uint8_t *gob_buf,
+    size_t gob_len,
+    const uint8_t *palette_rgb768,
+    jnb_atlas_frame *out_frames,
+    size_t frames_capacity,
+    size_t *out_frame_count,
+    uint8_t *out_pixels,
+    size_t pixels_capacity
+);
+
+/* Decodes a level/menu PCX pair (pcx_buf carrying its own embedded,
+ * display-scaled palette; mask_buf a paletteless boolean stencil, main.c's
+ * mask.pcx/menumask.pcx) into an opaque background RGBA8 buffer and an
+ * alpha-keyed foreground RGBA8 buffer that must draw on top of sprites
+ * (core/asset_runtime.zig's buildLevelLayers -- see tools/build_level_layers.py's
+ * module docstring for the put_pob occlusion semantics this reproduces).
+ * Both output buffers must be exactly JNB_ASSET_RGBA_LEN bytes -- the size
+ * is fixed, so unlike jnb_objects_copy there is no separate length query.
+ * Returns JNB_ERR_INVALID_ARGUMENT if either capacity is wrong, or
+ * JNB_ERR_ASSET_DECODE_FAILED if pcx_buf or mask_buf is malformed or
+ * truncated. */
+jnb_result jnb_level_layers_build(
+    const uint8_t *pcx_buf,
+    size_t pcx_len,
+    const uint8_t *mask_buf,
+    size_t mask_len,
+    uint8_t *out_background_rgba,
+    size_t background_capacity,
+    uint8_t *out_foreground_rgba,
+    size_t foreground_capacity
+);
 
 #ifdef __cplusplus
 } /* extern "C" */

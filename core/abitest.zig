@@ -549,3 +549,239 @@ test "jnb_step reproduces the Phase 1 corpus's real recorded checksum through th
     try std.testing.expectEqual(@as(u32, 0x1584ec43), checksum);
 }
 
+// --- Runtime .dat asset decoding (TASK-016.01) ----------------------------
+//
+// Hand-built minimal .dat/.gob/.pcx byte layouts (not @import-ing
+// core/dat.zig/gob.zig/pcx.zig's own encoders -- Tier-C purity forbids
+// anything but "std"), mirroring what core/dat.zig's own tests and
+// core/gob.zig's/core/pcx.zig's `encode()` round-trip tests already prove
+// byte-identical to modify/jnbpack.c and modify/gobpack.c's writers.
+
+fn writeU32(buf: []u8, ofs: usize, v: u32) void {
+    std.mem.writeInt(u32, buf[ofs..][0..4], v, .little);
+}
+
+fn writeI16(buf: []u8, ofs: usize, v: i16) void {
+    std.mem.writeInt(u16, buf[ofs..][0..2], @bitCast(v), .little);
+}
+
+// One .dat entry named "level.pcx" whose payload is `payload`.
+fn buildDatBytes(allocator: std.mem.Allocator, name: []const u8, payload: []const u8) ![]u8 {
+    const dir_size = 4 + 20;
+    const out = try allocator.alloc(u8, dir_size + payload.len);
+    @memset(out, 0);
+    writeU32(out, 0, 1);
+    @memcpy(out[4..][0..name.len], name);
+    writeU32(out, 16, @intCast(dir_size));
+    writeU32(out, 20, @intCast(payload.len));
+    @memcpy(out[dir_size..], payload);
+    return out;
+}
+
+const GobFrameSpec = struct { width: i16, height: i16, hs_x: i16, hs_y: i16, pixels: []const u8 };
+
+// A .gob with one or more frames: num_images, an offset table, then each
+// frame's width/height/hs_x/hs_y + width*height index bytes in order.
+fn buildGobBytesN(allocator: std.mem.Allocator, specs: []const GobFrameSpec) ![]u8 {
+    const header_size = 2 + 4 * specs.len;
+    var total: usize = header_size;
+    for (specs) |s| total += 8 + s.pixels.len;
+
+    const out = try allocator.alloc(u8, total);
+    std.mem.writeInt(u16, out[0..2], @intCast(specs.len), .little);
+
+    var offset: usize = header_size;
+    for (specs, 0..) |s, i| {
+        writeU32(out, 2 + i * 4, @intCast(offset));
+        writeI16(out, offset + 0, s.width);
+        writeI16(out, offset + 2, s.height);
+        writeI16(out, offset + 4, s.hs_x);
+        writeI16(out, offset + 6, s.hs_y);
+        @memcpy(out[offset + 8 ..][0..s.pixels.len], s.pixels);
+        offset += 8 + s.pixels.len;
+    }
+    return out;
+}
+
+// A single-frame .gob: num_images=1, one offset entry, then
+// width/height/hs_x/hs_y + width*height index bytes.
+fn buildGobBytes(allocator: std.mem.Allocator, width: i16, height: i16, hs_x: i16, hs_y: i16, pixels: []const u8) ![]u8 {
+    return buildGobBytesN(allocator, &.{.{ .width = width, .height = height, .hs_x = hs_x, .hs_y = hs_y, .pixels = pixels }});
+}
+
+// A width*height 8bpp PCX: 128-byte header (content irrelevant to decode),
+// literal (non-RLE) pixel bytes, then (if with_palette) a 0x0c marker and a
+// raw 768-byte palette.
+fn buildPcxBytes(allocator: std.mem.Allocator, pixels: []const u8, palette: ?[768]u8) ![]u8 {
+    const total = 128 + pixels.len + if (palette != null) @as(usize, 1 + 768) else 0;
+    const out = try allocator.alloc(u8, total);
+    @memset(out[0..128], 0);
+    for (pixels, 0..) |p, i| {
+        // Every literal test pixel below is < 0xc0, so no RLE escaping needed.
+        out[128 + i] = p;
+    }
+    if (palette) |pal| {
+        out[128 + pixels.len] = 0x0c;
+        @memcpy(out[128 + pixels.len + 1 ..], &pal);
+    }
+    return out;
+}
+
+test "jnb_dat_find locates an entry by case-insensitive prefix and reports not-found otherwise" {
+    const allocator = std.testing.allocator;
+    const payload = "hello";
+    const buf = try buildDatBytes(allocator, "menu.pcx", payload);
+    defer allocator.free(buf);
+
+    var offset: usize = 0;
+    var size: usize = 0;
+    // "menu" prefix-matches "menu.pcx" (core/dat.zig's prefixMatch).
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_dat_find(buf.ptr, buf.len, "MENU", 4, &offset, &size),
+    );
+    try std.testing.expectEqual(@as(usize, 24), offset);
+    try std.testing.expectEqual(@as(usize, payload.len), size);
+    try std.testing.expectEqualSlices(u8, payload, buf[offset .. offset + size]);
+
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_ASSET_NOT_FOUND),
+        c.jnb_dat_find(buf.ptr, buf.len, "rabbit.gob", 10, &offset, &size),
+    );
+}
+
+test "jnb_pcx_palette_decode display-scales a multiple-of-4 palette byte losslessly" {
+    const allocator = std.testing.allocator;
+    var raw_palette: [768]u8 = [_]u8{0} ** 768;
+    raw_palette[3 * 3 + 0] = 96; // multiple of 4: >>2 then <<2 is lossless
+    const pixels = [_]u8{0} ** (c.JNB_ASSET_SCREEN_W * c.JNB_ASSET_SCREEN_H);
+    const buf = try buildPcxBytes(allocator, &pixels, raw_palette);
+    defer allocator.free(buf);
+
+    var out_palette: [768]u8 = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_pcx_palette_decode(buf.ptr, buf.len, &out_palette, out_palette.len),
+    );
+    try std.testing.expectEqualSlices(u8, &raw_palette, &out_palette);
+
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_INVALID_ARGUMENT),
+        c.jnb_pcx_palette_decode(buf.ptr, buf.len, &out_palette, out_palette.len - 1),
+    );
+}
+
+test "jnb_gob_frame_count and jnb_gob_atlas_build two-call length-then-fill contract" {
+    const allocator = std.testing.allocator;
+    const pixels = [_]u8{ 0, 7 }; // 2x1: transparent key, then palette index 7
+    const gob_buf = try buildGobBytes(allocator, 2, 1, 3, -4, &pixels);
+    defer allocator.free(gob_buf);
+
+    var count: usize = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_gob_frame_count(gob_buf.ptr, gob_buf.len, &count),
+    );
+    try std.testing.expectEqual(@as(usize, 1), count);
+
+    var palette: [768]u8 = [_]u8{0} ** 768;
+    palette[7 * 3 + 0] = 10;
+    palette[7 * 3 + 1] = 20;
+    palette[7 * 3 + 2] = 30;
+
+    // NULL/0-capacity call: reports the required length without decoding pixels.
+    var required: usize = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_gob_atlas_build(gob_buf.ptr, gob_buf.len, &palette, null, 0, &required, null, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 1), required);
+
+    // Too-small nonzero capacity: JNB_ERR_BUFFER_TOO_SMALL, required still
+    // reported. Needs a second, distinct .gob with more than one frame,
+    // since a too-small *zero* capacity would instead take the "just report
+    // the length" early-return path (matching jnb_objects_copy's contract).
+    const two_frame_pixels = [_]u8{7};
+    const two_frame_gob = try buildGobBytesN(allocator, &.{
+        .{ .width = 1, .height = 1, .hs_x = 0, .hs_y = 0, .pixels = &two_frame_pixels },
+        .{ .width = 1, .height = 1, .hs_x = 0, .hs_y = 0, .pixels = &two_frame_pixels },
+    });
+    defer allocator.free(two_frame_gob);
+    var too_small: [1]c.jnb_atlas_frame = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_BUFFER_TOO_SMALL),
+        c.jnb_gob_atlas_build(two_frame_gob.ptr, two_frame_gob.len, &palette, &too_small, too_small.len, &required, null, 0),
+    );
+    try std.testing.expectEqual(@as(usize, 2), required);
+
+    var frames: [4]c.jnb_atlas_frame = undefined;
+    var pixels_out: [c.JNB_ASSET_RGBA_LEN]u8 = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_gob_atlas_build(gob_buf.ptr, gob_buf.len, &palette, &frames, frames.len, &required, &pixels_out, pixels_out.len),
+    );
+    try std.testing.expectEqual(@as(usize, 1), required);
+    try std.testing.expectEqual(@as(i32, 0), frames[0].x);
+    try std.testing.expectEqual(@as(i32, 0), frames[0].y);
+    try std.testing.expectEqual(@as(i32, 2), frames[0].width);
+    try std.testing.expectEqual(@as(i32, 1), frames[0].height);
+    try std.testing.expectEqual(@as(i32, 3), frames[0].hotspot_x);
+    try std.testing.expectEqual(@as(i32, -4), frames[0].hotspot_y);
+
+    // Pixel (0,0): palette index 0 -> transparent.
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0, 0 }, pixels_out[0..4]);
+    // Pixel (1,0): palette index 7 -> opaque, palette[7].
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 10, 20, 30, 255 }, pixels_out[4..8]);
+
+    // A wrong-sized pixel buffer is rejected even with enough frame capacity.
+    var wrong_pixels: [c.JNB_ASSET_RGBA_LEN - 1]u8 = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_INVALID_ARGUMENT),
+        c.jnb_gob_atlas_build(gob_buf.ptr, gob_buf.len, &palette, &frames, frames.len, &required, &wrong_pixels, wrong_pixels.len),
+    );
+}
+
+test "jnb_gob_frame_count reports JNB_ERR_ASSET_DECODE_FAILED on a truncated .gob" {
+    var count: usize = 0;
+    const truncated = [_]u8{ 1, 0 }; // claims 1 image but no offset entry follows
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_ASSET_DECODE_FAILED),
+        c.jnb_gob_frame_count(&truncated, truncated.len, &count),
+    );
+}
+
+test "jnb_level_layers_build composites background/foreground and enforces fixed buffer sizes" {
+    const allocator = std.testing.allocator;
+    const pixel_count = c.JNB_ASSET_SCREEN_W * c.JNB_ASSET_SCREEN_H;
+
+    var bg_pixels: [pixel_count]u8 = [_]u8{0} ** pixel_count;
+    bg_pixels[0] = 9;
+    var raw_palette: [768]u8 = [_]u8{0} ** 768;
+    raw_palette[9 * 3 + 0] = 200; // multiple of 4: lossless through the >>2/<<2 round trip
+    const pcx_buf = try buildPcxBytes(allocator, &bg_pixels, raw_palette);
+    defer allocator.free(pcx_buf);
+
+    var mask_pixels: [pixel_count]u8 = [_]u8{0} ** pixel_count;
+    mask_pixels[0] = 1;
+    const mask_buf = try buildPcxBytes(allocator, &mask_pixels, null);
+    defer allocator.free(mask_buf);
+
+    var background: [c.JNB_ASSET_RGBA_LEN]u8 = undefined;
+    var foreground: [c.JNB_ASSET_RGBA_LEN]u8 = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_level_layers_build(pcx_buf.ptr, pcx_buf.len, mask_buf.ptr, mask_buf.len, &background, background.len, &foreground, foreground.len),
+    );
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 200, 0, 0, 255 }, background[0..4]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 200, 0, 0, 255 }, foreground[0..4]);
+    // Pixel (1,0): unmasked -> background opaque, foreground transparent.
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0, 255 }, background[4..8]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 0, 0 }, foreground[4..8]);
+
+    var wrong_size: [c.JNB_ASSET_RGBA_LEN - 1]u8 = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_INVALID_ARGUMENT),
+        c.jnb_level_layers_build(pcx_buf.ptr, pcx_buf.len, mask_buf.ptr, mask_buf.len, &wrong_size, wrong_size.len, &foreground, foreground.len),
+    );
+}
+

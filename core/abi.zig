@@ -59,6 +59,8 @@ const steer = @import("steer.zig");
 const objects_mod = @import("objects.zig");
 const cpu_move_mod = @import("cpu_move.zig");
 const flies_mod = @import("flies.zig");
+const dat = @import("dat.zig");
+const asset_runtime = @import("asset_runtime.zig");
 
 const max_players = world.max_players;
 const num_objects = world.num_objects;
@@ -119,8 +121,10 @@ pub const JNB_ERR_INVALID_ARGUMENT: Result = 1;
 pub const JNB_ERR_BUFFER_TOO_SMALL: Result = 2;
 pub const JNB_ERR_ABI_VERSION_MISMATCH: Result = 3;
 pub const JNB_ERR_LEVEL_PARSE_FAILED: Result = 4;
+pub const JNB_ERR_ASSET_NOT_FOUND: Result = 5;
+pub const JNB_ERR_ASSET_DECODE_FAILED: Result = 6;
 
-const JNB_ABI_VERSION: u16 = 1;
+const JNB_ABI_VERSION: u16 = 2;
 
 const JNB_EVENT_SFX: u8 = 1;
 const JNB_EVENT_OBJECT_SPAWN: u8 = 2;
@@ -162,6 +166,18 @@ pub const Input = extern struct {
 };
 comptime {
     std.debug.assert(@sizeOf(Input) == 4);
+}
+
+pub const AtlasFrame = extern struct {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    hotspot_x: i32,
+    hotspot_y: i32,
+};
+comptime {
+    std.debug.assert(@sizeOf(AtlasFrame) == 24);
 }
 
 pub const PlayerView = extern struct {
@@ -532,5 +548,114 @@ export fn jnb_event_drain(world_ptr: ?*anyopaque, out_events: ?[*]Event, out_cap
     inst.event_head = (inst.event_head + n) % EVENT_QUEUE_CAP;
     inst.event_len -= n;
     count.* = n;
+    return JNB_OK;
+}
+
+// --- Runtime .dat asset decoding (TASK-016.01) ----------------------------
+//
+// Pure buffer-in/buffer-out: no jnb_world involved, no file I/O. Decoding
+// needs short-lived heap allocations gob.zig/pcx.zig's decode() makes
+// internally (a duplicated input buffer, an images/pixels slice); that is
+// an asset-loading concern, not part of the fixed-memory simulation state
+// this ABI otherwise never allocates for, so these functions alone use
+// page_allocator, freed before returning.
+
+export fn jnb_dat_find(buf: ?[*]const u8, buf_len: usize, name: ?[*]const u8, name_len: usize, out_offset: ?*usize, out_size: ?*usize) callconv(.c) Result {
+    const b = buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const n = name orelse return JNB_ERR_INVALID_ARGUMENT;
+    const offset_out = out_offset orelse return JNB_ERR_INVALID_ARGUMENT;
+    const size_out = out_size orelse return JNB_ERR_INVALID_ARGUMENT;
+
+    const entry = dat.find(b[0..buf_len], n[0..name_len]) orelse return JNB_ERR_ASSET_NOT_FOUND;
+    offset_out.* = entry.offset;
+    size_out.* = entry.size;
+    return JNB_OK;
+}
+
+export fn jnb_pcx_palette_decode(pcx_buf: ?[*]const u8, pcx_len: usize, out_palette_rgb768: ?[*]u8, palette_capacity: usize) callconv(.c) Result {
+    const buf = pcx_buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const out = out_palette_rgb768 orelse return JNB_ERR_INVALID_ARGUMENT;
+    if (palette_capacity != asset_runtime.palette_size) return JNB_ERR_INVALID_ARGUMENT;
+
+    const palette = asset_runtime.decodeDisplayPalette(std.heap.page_allocator, buf[0..pcx_len]) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    @memcpy(out[0..asset_runtime.palette_size], &palette);
+    return JNB_OK;
+}
+
+export fn jnb_gob_frame_count(gob_buf: ?[*]const u8, gob_len: usize, out_count: ?*usize) callconv(.c) Result {
+    const buf = gob_buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const out = out_count orelse return JNB_ERR_INVALID_ARGUMENT;
+
+    out.* = asset_runtime.gobFrameCount(std.heap.page_allocator, buf[0..gob_len]) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    return JNB_OK;
+}
+
+export fn jnb_gob_atlas_build(
+    gob_buf: ?[*]const u8,
+    gob_len: usize,
+    palette_rgb768: ?[*]const u8,
+    out_frames: ?[*]AtlasFrame,
+    frames_capacity: usize,
+    out_frame_count: ?*usize,
+    out_pixels: ?[*]u8,
+    pixels_capacity: usize,
+) callconv(.c) Result {
+    const buf = gob_buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const required = out_frame_count orelse return JNB_ERR_INVALID_ARGUMENT;
+
+    required.* = asset_runtime.gobFrameCount(std.heap.page_allocator, buf[0..gob_len]) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    if (out_frames == null or frames_capacity == 0) return JNB_OK;
+    if (frames_capacity < required.*) return JNB_ERR_BUFFER_TOO_SMALL;
+
+    const palette_ptr = palette_rgb768 orelse return JNB_ERR_INVALID_ARGUMENT;
+    if (pixels_capacity != asset_runtime.rgba_len) return JNB_ERR_INVALID_ARGUMENT;
+    const pixels = out_pixels orelse return JNB_ERR_INVALID_ARGUMENT;
+
+    var palette: [asset_runtime.palette_size]u8 = undefined;
+    @memcpy(&palette, palette_ptr[0..asset_runtime.palette_size]);
+
+    // AtlasFrame (this file) and asset_runtime.AtlasFrame are separately
+    // declared extern structs with identical field layout (six i32 fields,
+    // same order) -- one mirrors ../include/jumpnbump.h's jnb_atlas_frame
+    // for the ABI boundary, the other is asset_runtime.zig's own pure-Zig
+    // type. @ptrCast between them is layout-safe.
+    const frame_slice: []AtlasFrame = out_frames.?[0..required.*];
+    const asset_frames: []asset_runtime.AtlasFrame = @ptrCast(frame_slice);
+    const written = asset_runtime.buildSpriteAtlas(
+        std.heap.page_allocator,
+        buf[0..gob_len],
+        palette,
+        asset_frames,
+        pixels[0..pixels_capacity],
+    ) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    required.* = written;
+    return JNB_OK;
+}
+
+export fn jnb_level_layers_build(
+    pcx_buf: ?[*]const u8,
+    pcx_len: usize,
+    mask_buf: ?[*]const u8,
+    mask_len: usize,
+    out_background_rgba: ?[*]u8,
+    background_capacity: usize,
+    out_foreground_rgba: ?[*]u8,
+    foreground_capacity: usize,
+) callconv(.c) Result {
+    const pcx_bytes = pcx_buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const mask_bytes = mask_buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const bg = out_background_rgba orelse return JNB_ERR_INVALID_ARGUMENT;
+    const fg = out_foreground_rgba orelse return JNB_ERR_INVALID_ARGUMENT;
+    if (background_capacity != asset_runtime.rgba_len or foreground_capacity != asset_runtime.rgba_len) {
+        return JNB_ERR_INVALID_ARGUMENT;
+    }
+
+    asset_runtime.buildLevelLayers(
+        std.heap.page_allocator,
+        pcx_bytes[0..pcx_len],
+        mask_bytes[0..mask_len],
+        bg[0..background_capacity],
+        fg[0..foreground_capacity],
+    ) catch return JNB_ERR_ASSET_DECODE_FAILED;
     return JNB_OK;
 }

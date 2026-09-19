@@ -6,6 +6,7 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
+#include "jumpnbump_asset_loader.hpp"
 #include "jumpnbump_world.hpp"
 
 using namespace godot;
@@ -16,6 +17,7 @@ void initialize_jumpnbump_module(ModuleInitializationLevel p_level) {
 	}
 
 	GDREGISTER_CLASS(JumpnbumpWorld);
+	GDREGISTER_CLASS(JumpnbumpAssetLoader);
 }
 
 void uninitialize_jumpnbump_module(ModuleInitializationLevel p_level) {
