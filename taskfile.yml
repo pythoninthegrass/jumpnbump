@@ -5,6 +5,8 @@ version: "3.0"
 set: ['e', 'u', 'pipefail']
 shopt: ['globstar']
 
+dotenv: ['.env']
+
 vars:
   MISE_SHIMS: "{{.HOME}}/.local/share/mise/shims"
   ZIG_GLOBAL_CACHE_DIR: "{{.ROOT_DIR}}/.cache/zig"
@@ -23,6 +25,7 @@ includes:
   extension: taskfiles/extension.yml
   game: taskfiles/game.yml
   legacy: taskfiles/legacy.yml
+  release: taskfiles/release.yml
 
 tasks:
   default:

@@ -66,3 +66,9 @@ CLAUDE.md
 # tools/capture_level_picker.sh's screenshots (TASK-016.02 follow-up,
 # judgment-matched visual verification, not committed test fixtures)
 /artifacts/
+
+# Godot export output (TASK-009, task release:ship-macos)
+/game/build/
+
+# Signing/notarization secrets (TASK-009) -- never committed, see .env.example
+.env
