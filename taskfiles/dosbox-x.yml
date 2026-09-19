@@ -17,9 +17,7 @@ tasks:
     internal: true
     desc: "Install DOSBox-X via Homebrew"
     platforms: [darwin]
-    env:
-      NONINTERACTIVE: "1"
     cmds:
-      - brew install dosbox-x
+      - brew install --no-ask dosbox-x
     status:
       - command -v dosbox-x >/dev/null 2>&1
