@@ -13,6 +13,7 @@ env:
   # mise-shimmed binaries must win over a stale system PATH entry.
   PATH: "{{.MISE_SHIMS}}:{{.PATH}}"
   ZIG_GLOBAL_CACHE_DIR: "{{.ZIG_GLOBAL_CACHE_DIR}}"
+  HOMEBREW_NO_ASK: "1"
 
 includes:
   ci: taskfiles/ci.yml
