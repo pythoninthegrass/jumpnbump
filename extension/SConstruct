@@ -12,6 +12,17 @@
 customs = [File("custom.py").srcnode().abspath]
 env = SConscript("../third_party/godot-cpp/SConstruct", {"api_version": "4.7", "customs": customs})
 
+# Wrap the compiler in ccache when present, mutating the same env object
+# godot-cpp's own SConstruct just returned (its Library() build node holds a
+# reference to this env, not a snapshot, so this still lands on its ~200
+# generated binding sources too, not just this shim's own two files) --
+# by far the largest and least-often-changing chunk of every clean build.
+# Opt-in: a bare `scons` still works with no ccache installed.
+ccache = env.WhereIs("ccache")
+if ccache:
+    env["CC"] = "{} {}".format(ccache, env["CC"])
+    env["CXX"] = "{} {}".format(ccache, env["CXX"])
+
 env.Append(CPPPATH=["src/", "../include"])
 sources = Glob("src/*.cpp")
 
