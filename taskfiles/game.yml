@@ -10,6 +10,11 @@ tasks:
     cmds:
       - godot --path game
 
+  import:
+    desc: "Headless Godot import of the game/ project (TASK-009's export-macos needs the .godot/ import cache populated first)"
+    cmds:
+      - godot --headless --path game --import
+
   bootstrap:
     desc: "Install gdUnit4, the Tier-D test framework (checksum-verified download, TASK-014.07)"
     cmds:
