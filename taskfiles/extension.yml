@@ -28,3 +28,26 @@ tasks:
         platforms: [linux]
       - cmd: scons target=template_debug platform=macos arch=arm64
         platforms: [darwin]
+
+  build-macos:
+    desc: "Build the macOS arm64 GDExtension framework bundle for both template_debug and template_release (TASK-009)"
+    summary: |
+      macOS-only counterpart to extension:build that also builds the
+      template_release framework -- extension:build only ever produces
+      template_debug, which is fine for `task run` but leaves
+      game/bin/jumpnbump.gdextension's macos.release key unsatisfied,
+      so a Godot export (which links the release template) has nothing
+      to embed. Runs scons twice (target=template_debug, then
+      target=template_release) so both
+      game/bin/libjumpnbump.macos.template_debug.framework/ and
+      .../template_release.framework/ exist afterward, matching
+      ~/git/neo_snake's extension:build-macos.
+
+      Example:
+        task extension:build-macos
+    platforms: [darwin/arm64]
+    deps: [":submodules", ":core:build-abi"]
+    dir: extension
+    cmds:
+      - scons platform=macos arch=arm64 target=template_debug
+      - scons platform=macos arch=arm64 target=template_release
