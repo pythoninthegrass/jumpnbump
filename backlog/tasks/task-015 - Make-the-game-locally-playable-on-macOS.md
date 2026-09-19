@@ -4,7 +4,7 @@ title: Make the game locally playable on macOS
 status: Done
 assignee: []
 created_date: '2026-09-15 19:14'
-updated_date: '2026-09-19 01:49'
+updated_date: '2026-09-19 05:07'
 labels: []
 milestone: m-6
 dependencies: []
@@ -38,7 +38,16 @@ All five subtasks (TASK-015.01 through TASK-015.05) are Done:
 - 015.04: Main refactored into the title -> menu -> gameplay -> scores -> menu flow controller; GameplayScreen owns pause()/resume()/end_match() (gating TickDriver, never the core); AppLifecycle already stopped music cleanly on quit (TASK-014.06) and now covers every screen since MusicPlayer is created once in Main and outlives screen swaps.
 - 015.05: `task check` no longer builds/ships the SDL binary; `task legacy:build` keeps it available on demand for the difftest oracle; README rewritten to lead with the Godot build.
 
-Verified end-to-end: full gdUnit4 suite (30 cases across input/menu/settings/match-flow) plus the 5 legacy smoke tests all pass; tools/validate_game_boundary.py OK; `task check` runs clean without invoking `make`; `task legacy:build` still compiles the legacy binary; an ad-hoc headless script drove Main through title -> menu -> gameplay -> pause -> resume -> end_match -> scores with no runtime errors.
+Verified headlessly: full gdUnit4 suite (30 cases across input/menu/settings/match-flow) plus the 5 legacy smoke tests all pass; tools/validate_game_boundary.py OK; `task check` runs clean without invoking `make`; `task legacy:build` still compiles the legacy binary; an ad-hoc headless script drove Main through title -> menu -> gameplay -> pause -> resume -> end_match -> scores with no runtime errors.
 
-Caveat on AC#2: this work was done and verified on Linux in a sandbox with no display server (no X11/Wayland available, confirmed via `godot --path game` failing to create a DisplayServer). AC#2's "fresh macOS build" and any real interactive play-through (visual menu navigation, actual gamepad input, watching the mirror flip render correctly) could not be exercised here -- verification is headless/structural (gdUnit4 tests calling the same code paths directly) plus a scripted full-flow run, not a human playtest on macOS. Recommend a real playtest on macOS before considering this shippable.
+UPDATE -- real interactive playtest completed (2026-09-19): using the headless-Wayland playtest recipe already proven in ~/git/zelda3 (sway --backend=headless + wtype virtual-keyboard injection + grim screencopy, all pre-installed on this AlmaLinux host from that prior work), ran the actual `godot --path game` build (--rendering-driver opengl3, since the default Vulkan/Forward+ path failed to get swapchain surface capabilities under the headless wlroots backend) and drove it through the full flow with real screenshots at each step:
+
+1. Title screen renders correctly over menu.pcx, Start focused.
+2. Menu screen: all 4 rows (DOTT/red, JIFFY/blue, FIZZ/green, MIJJI/yellow) render with correct colours; toggled DOTT Human<->AI via Space and confirmed its Keys button visibly disables/re-enables; Tab-cycled focus through all rows to Start.
+3. Gameplay: real level render, all 4 rabbits visible with correct distinct per-slot sprite colours (rabbit_atlas.png's slot*18 offset confirmed visually), live scoreboard HUD; confirmed the sim is actively ticking frame-to-frame (fly particle positions changed between screenshots with no input).
+4. Pause (Esc): overlay appeared with Resume/End Match, Resume focused by default; confirmed the simulation genuinely freezes -- two screenshots 2s apart while paused were byte-identical.
+5. End Match -> Scores: correct final tally screen (DOTT/JIFFY/FIZZ/MIJJI: 0 each, as expected for a match with no bumps), Continue focused.
+6. Continue -> back to Menu: the full loop closes correctly with no manual intervention beyond the input itself.
+
+Caveat: `Left`/`Down` arrow keys did not register through this specific wtype+sway setup (Godot logged "Unsupported keymap format announced from the Wayland compositor" -- a known-finicky spot in that virtual-keyboard protocol path, also encountered and worked around differently in the zelda3 sessions); `Return`/`Tab`/`Space`/`Escape` all worked reliably. So actual rabbit movement from directional player input was not visually exercised in this playtest, though InputRouter's bitmask logic is separately covered by 5 passing gdUnit4 tests. This was done on Linux (AlmaLinux 10.2), not macOS -- AC#2 specifically asks for a macOS build, which remains unverified on that platform, but this session substantially de-risks it: it's now known-good, real-screenshot-verified interactive behaviour on the same Godot project (cross-platform, no Linux-specific code paths involved), not just headless assertions. All cleanup (godot/sway/wtype processes) confirmed stopped afterward.
 <!-- SECTION:FINAL_SUMMARY:END -->
