@@ -11,8 +11,13 @@ tasks:
       Builds game/bin/libjumpnbump.<platform>.template_debug[.<arch>]
       via `scons target=template_debug platform=...`, using Task's own
       `platforms:` key on each cmd (not a shell case statement) to pick
-      linux/macos/windows for the current OS -- the other two cmds are
-      silently skipped. Pulls in :submodules and core:build-abi first.
+      linux/macos for the current OS -- the other is silently skipped.
+      macOS pins arch=arm64 explicitly: a bare `scons platform=macos`
+      defaults to arch=universal, which fails to link against the
+      Zig-built libjumpnbump.a (single-arch, matching the host it was
+      built on) -- see TASK-012.05's own notes. Pulls in :submodules
+      and core:build-abi first. Windows/web are out of scope (no
+      [libraries] entry for either in game/bin/jumpnbump.gdextension).
 
       Example:
         task extension:build
@@ -21,7 +26,5 @@ tasks:
     cmds:
       - cmd: scons target=template_debug platform=linux
         platforms: [linux]
-      - cmd: scons target=template_debug platform=macos
+      - cmd: scons target=template_debug platform=macos arch=arm64
         platforms: [darwin]
-      - cmd: scons target=template_debug platform=windows
-        platforms: [windows]
