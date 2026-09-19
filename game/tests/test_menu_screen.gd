@@ -29,7 +29,7 @@ func test_menu_screen_builds_one_row_per_player_slot() -> void:
 	await get_tree().process_frame
 
 	var rows: Node = screen.get_node("Rows")
-	assert_int(rows.get_child_count()).is_equal(MenuSlots.MAX_PLAYERS + 1)  # 4 slots + Start button
+	assert_int(rows.get_child_count()).is_equal(MenuSlots.MAX_PLAYERS + 2)  # 4 slots + LevelButton + Start button
 	for slot in MenuSlots.MAX_PLAYERS:
 		var row: Node = rows.get_node("Slot%d" % slot)
 		assert_object(row).is_not_null()
@@ -66,3 +66,27 @@ func test_start_pressed_emits_start_requested_with_current_ai_mask() -> void:
 	screen.get_node("Rows/StartButton").pressed.emit()
 
 	assert_array(emitted).is_equal([0b0010])
+
+
+func test_level_button_shows_the_current_selection_and_updates_on_change() -> void:
+	var screen: MenuScreen = auto_free(MenuScreen.new())
+	add_child(screen)
+	await get_tree().process_frame
+
+	var level_button: Button = screen.get_node("Rows/LevelButton")
+	assert_str(level_button.text).is_equal("LEVEL: Built-in Level")
+
+	screen.set_level_name("mario3.dat")
+	assert_str(level_button.text).is_equal("LEVEL: mario3.dat")
+
+
+func test_level_button_pressed_emits_level_picker_requested() -> void:
+	var screen: MenuScreen = auto_free(MenuScreen.new())
+	add_child(screen)
+	await get_tree().process_frame
+
+	var emitted := []
+	screen.level_picker_requested.connect(func() -> void: emitted.append(true))
+	screen.get_node("Rows/LevelButton").pressed.emit()
+
+	assert_int(emitted.size()).is_equal(1)

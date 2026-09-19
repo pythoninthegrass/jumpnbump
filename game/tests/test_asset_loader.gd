@@ -13,6 +13,13 @@ extends GdUnitTestSuite
 const JNB_ASSET_SCREEN_W := 400
 const JNB_ASSET_SCREEN_H := 256
 
+## Local copies of jnb_result values (include/jumpnbump.h), not
+## JNB_OK/JNB_ERR_INVALID_ARGUMENT: tools/validate_game_boundary.py
+## (TASK-014.01) forbids anything outside game/simulation/ from referencing
+## the JumpnbumpWorld GDExtension class at all, constants included.
+const JNB_OK := 0
+const JNB_ERR_INVALID_ARGUMENT := 1
+
 
 func _jumpbump_dat_path() -> String:
 	var game_dir: String = ProjectSettings.globalize_path("res://").rstrip("/")
@@ -28,7 +35,7 @@ func test_load_dat_decodes_sprites_level_and_menu_from_the_real_archive() -> voi
 	var out: Dictionary = JumpnbumpAssetLoader.load_dat(_jumpbump_dat_path())
 	var elapsed_ms := (Time.get_ticks_usec() - start_usec) / 1000.0
 
-	assert_int(out["result"]).is_equal(JumpnbumpWorld.JNB_OK)
+	assert_int(out["result"]).is_equal(JNB_OK)
 
 	# AC#3: loading a typical .dat is not a multi-second stall.
 	assert_float(elapsed_ms).is_less(1000.0)
@@ -66,7 +73,7 @@ func test_load_dat_decodes_sprites_level_and_menu_from_the_real_archive() -> voi
 
 func test_load_dat_reports_invalid_argument_for_a_missing_file() -> void:
 	var out: Dictionary = JumpnbumpAssetLoader.load_dat("res://does_not_exist.dat")
-	assert_int(out["result"]).is_equal(JumpnbumpWorld.JNB_ERR_INVALID_ARGUMENT)
+	assert_int(out["result"]).is_equal(JNB_ERR_INVALID_ARGUMENT)
 
 
 func test_load_dat_reports_decode_failure_for_a_corrupt_archive() -> void:
@@ -88,10 +95,10 @@ func test_load_dat_reports_decode_failure_for_a_corrupt_archive() -> void:
 	var out: Dictionary = JumpnbumpAssetLoader.load_dat(path)
 	# No menu.pcx (palette decode skipped) and no gob/pcx entries found
 	# (dat.find can't read a truncated directory) -- every asset is simply
-	# absent, which load_dat treats as JumpnbumpWorld.JNB_OK with empty sprites/layers, not
+	# absent, which load_dat treats as JNB_OK with empty sprites/layers, not
 	# a decode failure. This documents that behavior explicitly rather than
 	# leaving it unspecified.
-	assert_int(out["result"]).is_equal(JumpnbumpWorld.JNB_OK)
+	assert_int(out["result"]).is_equal(JNB_OK)
 	assert_dict(out["sprites"]).is_empty()
 	assert_dict(out["level"]).is_empty()
 	assert_dict(out["menu"]).is_empty()

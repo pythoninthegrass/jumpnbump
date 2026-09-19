@@ -62,3 +62,7 @@ extension/.sconf_temp/
 
 # Agent config
 CLAUDE.md
+
+# tools/capture_level_picker.sh's screenshots (TASK-016.02 follow-up,
+# judgment-matched visual verification, not committed test fixtures)
+/artifacts/

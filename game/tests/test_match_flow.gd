@@ -97,6 +97,34 @@ func test_pause_overlay_resume_button_calls_back_into_gameplay_screen() -> void:
 	await get_tree().process_frame
 
 
+func test_gameplay_screen_uses_a_custom_levels_art_and_layout_when_provided() -> void:
+	var game_dir: String = ProjectSettings.globalize_path("res://").rstrip("/")
+	var dat_path := game_dir.get_base_dir().path_join("data/jumpbump.dat")
+	var custom_level: Dictionary = JumpnbumpAssetLoader.load_dat(dat_path)
+	assert_int(custom_level["result"]).is_equal(LevelValidator.JNB_OK)
+
+	var gameplay: GameplayScreen = auto_free(GameplayScreen.new())
+	add_child(gameplay)
+	var input_router: InputRouter = auto_free(InputRouter.new())
+	add_child(input_router)
+	gameplay.start(
+		{
+			"seed": 1,
+			"flies_enabled": false,
+			"player_count": 1,
+			"ai_mask": 0,
+			"no_gore": false,
+			"custom_level": custom_level,
+		},
+		auto_free(SfxPlayer.new()),
+		input_router,
+	)
+
+	var background: Sprite2D = gameplay.get_node("LevelLayers/Background")
+	assert_object(background.texture).is_not_null()
+	assert_vector(background.texture.get_size()).is_equal(Vector2(custom_level["level"]["background"].get_size()))
+
+
 func test_end_match_emits_match_ended_with_only_enabled_slots_scored() -> void:
 	var gameplay := _start_gameplay(2, 0)
 	var emitted := []

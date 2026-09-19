@@ -27,19 +27,29 @@ var _level_layers: Node2D
 
 
 ## config: {seed, flies_enabled, level_bytes, player_count, ai_mask,
-## no_gore, mirror_enabled}. sfx_player/input_router are owned by
-## whichever screen controller assembles GameplayScreen (Main) and outlive
-## it, so they're injected rather than created here.
+## no_gore, mirror_enabled, custom_level}. sfx_player/input_router are owned
+## by whichever screen controller assembles GameplayScreen (Main) and
+## outlive it, so they're injected rather than created here.
+##
+## custom_level (TASK-016.02), when non-empty, is a JumpnbumpAssetLoader.
+## load_dat() result already validated by LevelValidator: its levelmap_bytes
+## and level background/foreground replace config["level_bytes"]/the
+## built-in LEVEL_BACKGROUND/LEVEL_FOREGROUND resources, and its sprites are
+## forwarded to SpriteRenderer. Omitted or empty, every one of those stays
+## exactly the built-in-resource path this always used.
 func start(config: Dictionary, sfx_player: SfxPlayer, input_router: InputRouter) -> void:
 	_sfx_player = sfx_player
 	_input_router = input_router
 	_input_router.input_updated.connect(_on_input_updated)
 
+	var custom_level: Dictionary = config.get("custom_level", {})
+	var level_bytes = custom_level["levelmap_bytes"] if not custom_level.is_empty() else config["level_bytes"]
+
 	_world = SimWorld.new()
 	var result := _world.init(
 		config.get("seed", 1),
 		config.get("flies_enabled", true),
-		config["level_bytes"],
+		level_bytes,
 		config.get("player_count", 4),
 		config.get("ai_mask", 0),
 		config.get("no_gore", false),
@@ -54,18 +64,18 @@ func start(config: Dictionary, sfx_player: SfxPlayer, input_router: InputRouter)
 	var background := Sprite2D.new()
 	background.name = "Background"
 	background.centered = false
-	background.texture = load(LEVEL_BACKGROUND)
+	background.texture = ImageTexture.create_from_image(custom_level["level"]["background"]) if not custom_level.is_empty() else load(LEVEL_BACKGROUND)
 	_level_layers.add_child(background)
 
 	_sprite_renderer = SpriteRenderer.new()
 	_sprite_renderer.name = "SpriteRenderer"
 	_level_layers.add_child(_sprite_renderer)
-	_sprite_renderer.setup(_world)
+	_sprite_renderer.setup(_world, custom_level.get("sprites", {}))
 
 	var foreground := Sprite2D.new()
 	foreground.name = "Foreground"
 	foreground.centered = false
-	foreground.texture = load(LEVEL_FOREGROUND)
+	foreground.texture = ImageTexture.create_from_image(custom_level["level"]["foreground"]) if not custom_level.is_empty() else load(LEVEL_FOREGROUND)
 	_level_layers.add_child(foreground)
 
 	_scoreboard_renderer = ScoreboardRenderer.new()

@@ -23,12 +23,26 @@ var _objects_texture: Texture2D
 var _rabbit_frames: Array = []
 var _objects_frames: Array = []
 
-func setup(p_world: SimWorld) -> void:
+## `custom_sprites` is JumpnbumpAssetLoader.load_dat()'s "sprites" Dictionary
+## (TASK-016.02): when it holds "rabbit"/"objects" entries, their runtime-
+## decoded Image/frames replace the build-time atlas resources for this
+## match, so a custom level's own art renders during play. Empty (the
+## default) keeps the exact build-time-resource path this always used.
+func setup(p_world: SimWorld, custom_sprites: Dictionary = {}) -> void:
 	world = p_world
-	_rabbit_texture = load("res://content/sprites/rabbit_atlas.png")
-	_objects_texture = load("res://content/sprites/objects_atlas.png")
-	_rabbit_frames = _load_frames("res://content/sprites/rabbit_atlas.json")
-	_objects_frames = _load_frames("res://content/sprites/objects_atlas.json")
+	if custom_sprites.has("rabbit"):
+		_rabbit_texture = ImageTexture.create_from_image(custom_sprites["rabbit"]["image"])
+		_rabbit_frames = _indexed_frames(custom_sprites["rabbit"]["frames"])
+	else:
+		_rabbit_texture = load("res://content/sprites/rabbit_atlas.png")
+		_rabbit_frames = _load_frames("res://content/sprites/rabbit_atlas.json")
+
+	if custom_sprites.has("objects"):
+		_objects_texture = ImageTexture.create_from_image(custom_sprites["objects"]["image"])
+		_objects_frames = _indexed_frames(custom_sprites["objects"]["frames"])
+	else:
+		_objects_texture = load("res://content/sprites/objects_atlas.png")
+		_objects_frames = _load_frames("res://content/sprites/objects_atlas.json")
 
 func _load_frames(path: String) -> Array:
 	var text := FileAccess.get_file_as_string(path)
@@ -38,6 +52,19 @@ func _load_frames(path: String) -> Array:
 	if data == null:
 		return []
 	return data.get("frames", [])
+
+## JumpnbumpAssetLoader's per-frame Dictionaries have no "index" field (the
+## build-time atlas JSON's own sprite-index key that sprite_geometry.gd's
+## frame_rect() looks up by) -- decode order IS frame index (confirmed
+## against the committed rabbit_atlas.json: index == array position), so
+## this just stamps that position in.
+func _indexed_frames(frames: Array) -> Array:
+	var out := []
+	for i in frames.size():
+		var frame: Dictionary = (frames[i] as Dictionary).duplicate()
+		frame["index"] = i
+		out.append(frame)
+	return out
 
 func _process(_delta: float) -> void:
 	if world != null:

@@ -14,6 +14,7 @@ extends Control
 ## extra wiring beyond grabbing initial focus.
 
 signal start_requested(ai_mask: int)
+signal level_picker_requested()
 
 const BACKGROUND := "res://content/levels/menu_background.png"
 const FOREGROUND := "res://content/levels/menu_foreground.png"
@@ -26,10 +27,26 @@ var _mode_buttons: Array = []
 var _key_buttons: Array = []
 var _rebind_slot := -1
 var _rebind_action := ""
+var _level_button: Button
+var _level_name := "Built-in Level"
 
 
 func set_input_router(router: InputRouter) -> void:
 	_input_router = router
+
+
+## TASK-016.02: reflects the level currently picked via LevelPickerScreen
+## (Main owns the selection across menu re-entries; this screen only
+## displays it). Callable before or after _ready() -- updates the button
+## label directly once it exists, else just the pending value _ready() uses.
+func set_level_name(level_name: String) -> void:
+	_level_name = level_name
+	if _level_button != null:
+		_level_button.text = _level_button_text()
+
+
+func _level_button_text() -> String:
+	return "LEVEL: %s" % _level_name
 
 
 func _ready() -> void:
@@ -50,6 +67,12 @@ func _ready() -> void:
 
 	for slot in MenuSlots.MAX_PLAYERS:
 		rows.add_child(_build_row(slot))
+
+	_level_button = Button.new()
+	_level_button.name = "LevelButton"
+	_level_button.text = _level_button_text()
+	_level_button.pressed.connect(_on_level_pressed)
+	rows.add_child(_level_button)
 
 	var start_button := Button.new()
 	start_button.name = "StartButton"
@@ -135,6 +158,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_rebind_slot = -1
 		_rebind_action = ""
 	get_viewport().set_input_as_handled()
+
+
+func _on_level_pressed() -> void:
+	level_picker_requested.emit()
 
 
 func _on_start_pressed() -> void:

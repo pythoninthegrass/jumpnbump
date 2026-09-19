@@ -37,3 +37,23 @@ tasks:
       - godot --headless --path game --script res://tests/test_text_geometry.gd
       - godot --headless --path game --script res://tests/test_audio.gd
       - godot --headless --path game -s res://addons/gdUnit4/bin/GdUnitCmdTool.gd -a res://tests --ignoreHeadlessMode
+
+  capture:
+    desc: "Capture real-rendered screenshots of the title/menu/level-picker/gameplay screens under headless sway (TASK-016.02 follow-up)"
+    summary: |
+      task game:capture -- [output_dir]
+
+      Renders the Godot build at title/menu/level_picker/level_picker_error/
+      gameplay_builtin/gameplay_custom states under a headless sway
+      compositor (sway+grim, see tools/capture_level_picker.sh and
+      main.gd's --capture-state= debug hook), writing PNGs to output_dir
+      (default artifacts/level_picker/) for a human to eyeball -- headless
+      gdUnit4 proves scene construction and signal wiring but not actual
+      rendering.
+
+      Deliberately NOT part of `task check` -- judgment-matched visual
+      verification, not an automated pixel-diff gate. Requires sway, grim,
+      and a resolved godot binary on PATH; Linux + Wayland only.
+    platforms: [linux]
+    cmds:
+      - ./tools/capture_level_picker.sh {{.CLI_ARGS}}
