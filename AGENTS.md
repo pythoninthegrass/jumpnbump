@@ -62,6 +62,7 @@ Always use Context7 MCP when I need library/API documentation, code generation, 
 ### Libraries
 
 - j178/prek
+- joncampbell123/dosbox-x
 - mrlesk/backlog.md
 - websites/taskfile_dev
 - websites/zig_guide
