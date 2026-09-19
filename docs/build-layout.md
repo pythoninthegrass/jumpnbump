@@ -129,6 +129,75 @@ Pinned in `.tool-versions`, resolved via mise:
 versions always win, and sets `ZIG_GLOBAL_CACHE_DIR` to a repo-local
 `.cache/zig` directory rather than the user cache.
 
+## macOS release (TASK-009)
+
+`task release:ship-macos` turns a clean checkout into a signed, notarized, stapled
+`game/build/macos/Jump'n'Bump.dmg`. It runs, in order: `keychain-setup` (imports the Developer
+ID certificate into an ephemeral keychain), `export-macos` (builds the release GDExtension
+framework and headlessly exports+signs via Godot), `verify-signing`, `decode-api-key`,
+`notarize` (submits, staples, then asserts Gatekeeper acceptance). `keychain-cleanup` and
+`cleanup-api-key` are registered via Task's `defer:`, so both run even if an earlier step
+fails — confirmed by forcing a mid-pipeline export failure and checking `security
+list-keychains` no longer lists the ephemeral keychain afterward.
+
+Credentials (`APPLE_SIGNING_IDENTITY`, `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+`KEYCHAIN_PASSWORD`, `APPLE_API_KEY_B64`, `APPLE_API_KEY`, `APPLE_API_ISSUER`) come from `.env`
+(loaded automatically by the root `taskfile.yml`'s `dotenv: ['.env']` — no need to `source` it
+yourself), never committed; see `.env.example`. The signing identity string in
+`game/export_presets.cfg`'s `codesign/identity` is **not** treated as a secret — it's a Common
+Name embedded in every signed binary regardless — only the certificate, its password, and the
+API key are env-only.
+
+**GDExtension architecture is arm64-only; the export preset's engine architecture is
+`universal`.** `core/build.zig` and `extension/SConstruct` only ever build for the host arch
+(`task extension:build-macos` builds `libjumpnbump.macos.template_debug.framework` and
+`.../template_release.framework`, both arm64). Godot 4.7's macOS export templates, however,
+ship only a `universal` (arm64+x86_64 fat) engine binary — there is no arm64-only template to
+select, so `game/export_presets.cfg`'s `binary_format/architecture` must be `"universal"` or
+export fails with "Requested template binary godot_macos_release.arm64 not found". The
+resulting `.app`'s main engine executable is genuinely universal; the embedded GDExtension
+`.framework` is not. It dlopens the arm64 slice fine on Apple Silicon; it would fail to load
+under Rosetta on Intel Macs. A true universal build is future work (cross-compile `core/`
+for `x86_64-macos` via a second `-Dtarget` pass, `lipo` the two static libs, build the
+extension twice and `lipo` the two framework binaries).
+
+**Export templates must be extracted, not just downloaded.** `~/Library/Application
+Support/Godot/export_templates/4.7.1-stable/macos.zip` is downloaded by mise/the editor but
+not auto-extracted; `godot --headless --export-release` fails to find the template binary
+until `macos.zip` is unzipped in place (one-time, per-machine, not something `task` provisions).
+
+**Signing hosts reached only over SSH need a `launchctl asuser` bridge** (mirrors
+`~/git/neo_snake`'s TASK-044/decision-027). macOS's Security framework won't release an
+imported private key to a process outside the GUI console login session's audit/bootstrap
+namespace, and a bare SSH session is always outside it. `export-macos` wraps its `godot`
+invocation in `sudo launchctl asuser "$(id -u)" ...` to re-attach into that namespace before
+signing starts, and routes the DMG's ownership fix (`launchctl asuser` keeps root's EUID)
+through the identical invocation so one narrowly-scoped sudoers.d entry covers both:
+`lance ALL=(root) NOPASSWD: /bin/launchctl asuser *`. That entry must be installed directly by
+a human with sudo access — an agent must never be given or asked for a sudo password — so it's
+a manual, one-time signing-host prerequisite, not something `task release:ship-macos`
+provisions itself. It's a no-op wrapper on a machine driven from a real console session.
+
+**`verify-signing` mounts the exported DMG.** Godot's DMG export mode builds and signs the
+`.app` inside a private temp directory and never leaves a loose bundle under
+`game/build/macos/` — only the final signed `.dmg`. `verify-signing` mounts it read-only via
+`hdiutil attach -nobrowse -readonly`, verifies the embedded
+`libjumpnbump.macos.template_release.framework` directly (it's `dlopen`'d at runtime, so
+`codesign --verify --deep --strict` on the `.app` alone doesn't walk into it) plus its
+hardened-runtime flag, then the `.app`'s own nested signatures, then the DMG's own signature,
+and always detaches the mounted volume via a `trap ... EXIT` regardless of which check fails.
+
+Confirmed end to end against live Apple infrastructure on `mini`: real notarization (Accepted),
+real stapling, `spctl -a -vv --type open --context context:primary-signature` reporting
+`accepted` / `source=Notarized Developer ID`, both the `.framework` and `.app` independently
+verified signed with the hardened-runtime flag set.
+
+A recurring, benign warning during export — `"libjumpnbump.macos.template_release.framework":
+Info.plist missing or invalid, new Info.plist generated` — is expected and not chased:
+`extension/SConstruct`'s macOS branch deliberately builds a flat framework directory with no
+`Contents/Info.plist` (that nesting is only required for *dependency* frameworks), and Godot
+regenerates one at export time regardless.
+
 ## Constraints
 
 - **No allocator, no libc in `core/` library code**, outside `core/abi.zig` — this is a
