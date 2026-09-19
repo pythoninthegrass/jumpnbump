@@ -44,18 +44,26 @@ tasks:
       - test -z "$(git submodule status | grep '^-')"
 
   deps:
-    desc: "Fetch every prerequisite the build needs (currently: git submodules)"
+    desc: "Fetch/install every prerequisite any build in this repo needs: git submodules plus every platform's _install-* toolchain step"
     summary: |
-      Meta task aggregating every fetch-only prerequisite the build
-      needs before it can compile anything -- currently just
-      `submodules`. New prerequisite tasks (e.g. a future toolchain
-      check) get added here as another `task:` entry, not folded into
-      this task's own cmds.
+      Meta task aggregating every prerequisite-fetching task in the
+      repo -- git submodules, and every internal `_install-*` task
+      (SDL 1.2 for the legacy oracle build, an objcopy-compatible tool
+      for core:build-abi on macOS) -- so a fresh clone only needs one
+      command before anything else builds. Each is idempotent and
+      platform-gated already, so this is safe to run unconditionally
+      on any OS: non-matching platform steps are silently skipped, and
+      already-satisfied ones are no-ops. New prerequisite tasks get
+      added here as another `task:` entry, not folded into this task's
+      own cmds.
 
       Example:
         task deps
     cmds:
       - task: submodules
+      - task: core:_install-macos-objcopy
+      - task: ci:_install-linux-deps
+      - task: ci:_install-macos-deps
 
   check:
     desc: "The one documented build/test command: the Godot build's boundary/test gates and the asset pipeline's reproducibility gates (TASK-015.05 -- the legacy SDL build is no longer part of the default gate, see `task legacy:build`)"
