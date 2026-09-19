@@ -59,11 +59,14 @@ Three build systems are siblings — none absorbs another:
   `env.File(...)` so a core rebuild triggers a relink (never a bare `-l`/`-L` flag)
   (`TASK-012.04`).
 - **The legacy top-level `Makefile`** — unchanged, still the only way to build the SDL
-  binary, `gobpack`/`jnbpack`/`jnbunpack`, and `data/jumpbump.dat`.
+  binary, `gobpack`/`jnbpack`/`jnbunpack`, and `data/jumpbump.dat` (`task legacy:build`,
+  TASK-015.05 — no longer part of the default `task check` gate).
 
-`taskfile.yml` is the single entry point above all three. `includes: {}` is currently empty
-by design — `taskfiles/core.yml`, `taskfiles/extension.yml`, `taskfiles/game.yml` get wired
-in as each corresponding build lands, not before.
+`taskfile.yml` is the single entry point above all three, via `taskfiles/core.yml`
+(`zig build abi`), `taskfiles/extension.yml` (the SCons build, vendoring
+`third_party/godot-cpp` on demand), and `taskfiles/game.yml`. `task run` chains
+`extension:build` then `game:run` as the one-shot way to play the Godot build from a
+clean clone.
 
 ## `zig build` steps
 

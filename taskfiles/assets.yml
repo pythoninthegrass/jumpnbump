@@ -2,9 +2,7 @@
 
 version: "3.0"
 
-# TASK-013: the Godot asset pipeline. Each render/check pair mirrors
-# ~/git/neo_snake's tools/render_audio.py --check convention -- render
-# writes game/content/, check regenerates into a temp dir and diffs.
+# TASK-013: the Godot asset pipeline (see docs/build-layout.md).
 
 tasks:
   sprites:render:

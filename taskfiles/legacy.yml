@@ -2,11 +2,7 @@
 
 version: "3.0"
 
-# The legacy SDL 1.2 C build (main.c, sdl/, modify/, data/) is kept forever
-# as the Phase 1 differential-test oracle (TASK-008), but TASK-015.05
-# retires it from the default `task check` gate and from being shipped as
-# a user-facing artifact -- the Godot build (`task game:run`) is that now.
-# This task file is how you still build it on demand.
+# TASK-015.05: the legacy SDL build, kept on demand as the difftest oracle.
 
 tasks:
   build:

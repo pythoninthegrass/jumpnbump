@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# TASK-012.04/.05: builds the godot-cpp GDExtension shim (see docs/build-layout.md).
+
+tasks:
+  _vendor-godot-cpp:
+    internal: true
+    desc: "Fetch the pinned third_party/godot-cpp submodule (TASK-004) if it isn't checked out yet"
+    cmds:
+      - git submodule update --init --recursive -- third_party/godot-cpp
+    status:
+      - test -f third_party/godot-cpp/SConstruct
+
+  build:
+    desc: "Build the GDExtension shim for the current platform (template_debug), pulling in core:build-abi first"
+    deps: ["_vendor-godot-cpp", ":core:build-abi"]
+    dir: extension
+    cmds:
+      - cmd: scons target=template_debug platform=linux
+        platforms: [linux]
+      - cmd: scons target=template_debug platform=macos
+        platforms: [darwin]
+      - cmd: scons target=template_debug platform=windows
+        platforms: [windows]

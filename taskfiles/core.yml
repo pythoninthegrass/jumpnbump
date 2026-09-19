@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# TASK-012: builds core/'s C ABI, linked by taskfiles/extension.yml.
+
+tasks:
+  build-abi:
+    desc: "Build core/zig-out/lib/libjumpnbump.a (core/abi.zig's frozen jnb_* symbol surface)"
+    dir: core
+    cmds:
+      - zig build abi
+    sources:
+      - "**/*.zig"
+    generates:
+      - zig-out/lib/libjumpnbump.a

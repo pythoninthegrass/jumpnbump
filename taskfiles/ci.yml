@@ -4,9 +4,7 @@ version: "3.0"
 
 vars:
   LINUX_APT_PKGS: "libsdl1.2-dev libsdl-mixer1.2-dev libsdl-net1.2-dev zlib1g-dev libbz2-dev"
-  # SDL 1.2 was dropped from Homebrew core (sdl12-compat replaced it) and
-  # there's no current SDL_mixer/SDL_net 1.2-compatible formula, so those two
-  # are built from source against sdl12-compat's sdl-config.
+  # SDL_mixer/SDL_net 1.2 aren't in Homebrew; built from source below.
   MACOS_SDL_MIXER_VERSION: "1.2.12"
   MACOS_SDL_NET_VERSION: "1.2.8"
   MACOS_SDL_BUILD_DIR: "{{.ROOT_DIR}}/.cache/sdl12-build"
