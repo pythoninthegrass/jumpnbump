@@ -12,6 +12,7 @@ config_version=5
 
 config/name="Jump'n'Bump"
 config/features=PackedStringArray("4.7")
+config/icon="res://icon.png"
 run/delta_smoothing=false
 run/main_scene="res://main.tscn"
 
