@@ -4,21 +4,54 @@ version: "3.0"
 
 vars:
   LINUX_APT_PKGS: "libsdl1.2-dev libsdl-mixer1.2-dev libsdl-net1.2-dev zlib1g-dev libbz2-dev"
-  # SDL_mixer/SDL_net 1.2 aren't in Homebrew; built from source below.
-  MACOS_SDL_MIXER_VERSION: "1.2.12"
-  MACOS_SDL_NET_VERSION: "1.2.8"
+  # SDL_mixer/SDL_net 1.2 aren't in Homebrew or EPEL; built from source below.
+  SDL_MIXER_VERSION: "1.2.12"
+  SDL_NET_VERSION: "1.2.8"
   MACOS_SDL_BUILD_DIR: "{{.ROOT_DIR}}/.cache/sdl12-build"
+  # dnf-based distros (Fedora/RHEL/AlmaLinux/Rocky) only ship the SDL 1.2 API
+  # itself, via sdl12-compat-devel; SDL_mixer/SDL_net 1.2 are built from
+  # source below, into /usr so `sdl-config --cflags` (prefix /usr) finds them.
+  LINUX_DNF_PKGS: "sdl12-compat-devel libmikmod-devel bzip2-devel zlib-ng-compat-devel"
+  LINUX_DNF_SDL_BUILD_DIR: "{{.ROOT_DIR}}/.cache/sdl12-build-linux"
 
 tasks:
   _install-linux-deps:
     internal: true
-    desc: "Install the SDL 1.2 dev packages the legacy make build needs (apt)"
+    desc: "Install the SDL 1.2 dev packages the legacy make build needs (apt, or dnf building SDL_mixer/SDL_net 1.2 from source)"
     platforms: [linux]
     cmds:
-      - sudo apt-get update
-      - sudo apt-get install -y {{.LINUX_APT_PKGS}}
+      - |
+        set -e
+        if command -v apt-get >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y {{.LINUX_APT_PKGS}}
+        elif command -v dnf >/dev/null 2>&1; then
+          sudo dnf install -y {{.LINUX_DNF_PKGS}}
+          mkdir -p {{.LINUX_DNF_SDL_BUILD_DIR}}
+          cd {{.LINUX_DNF_SDL_BUILD_DIR}}
+          curl -fsSL -o SDL_mixer-{{.SDL_MIXER_VERSION}}.tar.gz \
+            https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-{{.SDL_MIXER_VERSION}}.tar.gz
+          rm -rf SDL_mixer-{{.SDL_MIXER_VERSION}}
+          tar xzf SDL_mixer-{{.SDL_MIXER_VERSION}}.tar.gz
+          (cd SDL_mixer-{{.SDL_MIXER_VERSION}} && ./configure --prefix=/usr && make -j"$(nproc)" && sudo make install)
+          curl -fsSL -o SDL_net-{{.SDL_NET_VERSION}}.tar.gz \
+            https://www.libsdl.org/projects/SDL_net/release/SDL_net-{{.SDL_NET_VERSION}}.tar.gz
+          rm -rf SDL_net-{{.SDL_NET_VERSION}}
+          tar xzf SDL_net-{{.SDL_NET_VERSION}}.tar.gz
+          (cd SDL_net-{{.SDL_NET_VERSION}} && ./configure --prefix=/usr && make -j"$(nproc)" && sudo make install)
+        else
+          echo "error: no supported package manager found (need apt-get or dnf)" >&2
+          exit 1
+        fi
     status:
-      - for pkg in {{.LINUX_APT_PKGS}}; do dpkg -s "$pkg" >/dev/null 2>&1 || exit 1; done
+      - |
+        if command -v apt-get >/dev/null 2>&1; then
+          for pkg in {{.LINUX_APT_PKGS}}; do dpkg -s "$pkg" >/dev/null 2>&1 || exit 1; done
+        elif command -v dnf >/dev/null 2>&1; then
+          for pkg in {{.LINUX_DNF_PKGS}}; do rpm -q "$pkg" >/dev/null 2>&1 || exit 1; done
+          test -e /usr/lib64/libSDL_mixer.so -o -e /usr/lib/libSDL_mixer.so
+          test -e /usr/lib64/libSDL_net.so -o -e /usr/lib/libSDL_net.so
+        fi
 
   linux-check:
     desc: "Linux CI entrypoint: install deps, verify the legacy oracle still builds, then run the documented build/test gate"
@@ -37,11 +70,11 @@ tasks:
       - |
         set -e
         cd {{.MACOS_SDL_BUILD_DIR}}
-        curl -fsSL -o SDL_mixer-{{.MACOS_SDL_MIXER_VERSION}}.tar.gz \
-          https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-{{.MACOS_SDL_MIXER_VERSION}}.tar.gz
-        rm -rf SDL_mixer-{{.MACOS_SDL_MIXER_VERSION}}
-        tar xzf SDL_mixer-{{.MACOS_SDL_MIXER_VERSION}}.tar.gz
-        cd SDL_mixer-{{.MACOS_SDL_MIXER_VERSION}}
+        curl -fsSL -o SDL_mixer-{{.SDL_MIXER_VERSION}}.tar.gz \
+          https://www.libsdl.org/projects/SDL_mixer/release/SDL_mixer-{{.SDL_MIXER_VERSION}}.tar.gz
+        rm -rf SDL_mixer-{{.SDL_MIXER_VERSION}}
+        tar xzf SDL_mixer-{{.SDL_MIXER_VERSION}}.tar.gz
+        cd SDL_mixer-{{.SDL_MIXER_VERSION}}
         CFLAGS="-I$(brew --prefix libmikmod)/include" LDFLAGS="-L$(brew --prefix libmikmod)/lib" \
           ./configure --prefix="$(brew --prefix)"
         make -j"$(sysctl -n hw.ncpu)"
@@ -49,11 +82,11 @@ tasks:
       - |
         set -e
         cd {{.MACOS_SDL_BUILD_DIR}}
-        curl -fsSL -o SDL_net-{{.MACOS_SDL_NET_VERSION}}.tar.gz \
-          https://www.libsdl.org/projects/SDL_net/release/SDL_net-{{.MACOS_SDL_NET_VERSION}}.tar.gz
-        rm -rf SDL_net-{{.MACOS_SDL_NET_VERSION}}
-        tar xzf SDL_net-{{.MACOS_SDL_NET_VERSION}}.tar.gz
-        cd SDL_net-{{.MACOS_SDL_NET_VERSION}}
+        curl -fsSL -o SDL_net-{{.SDL_NET_VERSION}}.tar.gz \
+          https://www.libsdl.org/projects/SDL_net/release/SDL_net-{{.SDL_NET_VERSION}}.tar.gz
+        rm -rf SDL_net-{{.SDL_NET_VERSION}}
+        tar xzf SDL_net-{{.SDL_NET_VERSION}}.tar.gz
+        cd SDL_net-{{.SDL_NET_VERSION}}
         ./configure --prefix="$(brew --prefix)"
         make -j"$(sysctl -n hw.ncpu)"
         make install

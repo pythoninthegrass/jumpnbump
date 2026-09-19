@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+tasks:
+  _install-linux-dosbox-x:
+    internal: true
+    desc: "Install DOSBox-X via Flatpak/Flathub (per-user, no root needed)"
+    platforms: [linux]
+    cmds:
+      - flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      - flatpak install -y --user flathub com.dosbox_x.DOSBox-X
+    status:
+      - flatpak list --user --app | grep -q com.dosbox_x.DOSBox-X
+
+  _install-macos-dosbox-x:
+    internal: true
+    desc: "Install DOSBox-X via Homebrew"
+    platforms: [darwin]
+    cmds:
+      - brew install dosbox-x
+    status:
+      - command -v dosbox-x >/dev/null 2>&1

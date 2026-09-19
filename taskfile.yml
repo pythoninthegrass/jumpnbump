@@ -18,6 +18,7 @@ includes:
   ci: taskfiles/ci.yml
   assets: taskfiles/assets.yml
   core: taskfiles/core.yml
+  dosbox-x: taskfiles/dosbox-x.yml
   extension: taskfiles/extension.yml
   game: taskfiles/game.yml
   legacy: taskfiles/legacy.yml
@@ -49,7 +50,8 @@ tasks:
       Meta task aggregating every prerequisite-fetching task in the
       repo -- git submodules, and every internal `_install-*` task
       (SDL 1.2 for the legacy oracle build, an objcopy-compatible tool
-      for core:build-abi on macOS) -- so a fresh clone only needs one
+      for core:build-abi on macOS, DOSBox-X for testing custom levels)
+      -- so a fresh clone only needs one
       command before anything else builds. Each is idempotent and
       platform-gated already, so this is safe to run unconditionally
       on any OS: non-matching platform steps are silently skipped, and
@@ -64,6 +66,8 @@ tasks:
       - task: core:_install-macos-objcopy
       - task: ci:_install-linux-deps
       - task: ci:_install-macos-deps
+      - task: dosbox-x:_install-linux-dosbox-x
+      - task: dosbox-x:_install-macos-dosbox-x
 
   check:
     desc: "The one documented build/test command: the Godot build's boundary/test gates and the asset pipeline's reproducibility gates (TASK-015.05 -- the legacy SDL build is no longer part of the default gate, see `task legacy:build`)"
