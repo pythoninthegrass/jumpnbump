@@ -1,16 +1,18 @@
 class_name Main
 extends Node
 
-## Composition root (TASK-014.01): main.tscn holds only this script on a
-## single Node. Every other node the game needs is assembled here in
-## _ready() rather than hand-built into the scene, matching neo_snake's
-## GameScreen convention -- subsequent TASK-014.* subtasks add the actual
-## renderer/audio children. TASK-014.02 wires the sim itself: a SimWorld
-## driven each frame by TickDriver, gated on/off without touching the core.
+## Composition root (TASK-014.01) and, since TASK-015.04, the title ->
+## menu -> gameplay -> scores -> menu screen flow controller. main.tscn
+## holds only this script on a single Node; every screen is instantiated
+## in code and swapped under _screen_container as one child at a time.
+## Audio players, InputRouter, and AppLifecycle are created once here and
+## outlive every screen swap, so quitting from any screen still stops the
+## one live MusicPlayer (TASK-014.06 AC#4) and InputRouter's persisted
+## keybinds survive the whole session, not just one match.
 ##
-## Placeholder init: no level-loading UI or content-driven level selection
-## exists yet (that lands with TASK-014.04/016), so this seeds a hardcoded
-## sample level purely so the sim has something to tick against.
+## Placeholder level: no level-loading UI or content-driven level
+## selection exists yet (TASK-016's job), so every match hardcodes the
+## same sample level (TASK-014.02's fixture text).
 const SAMPLE_LEVEL_TEXT := (
 	"1110000000000000000000\n" +
 	"1000000000001000011000\n" +
@@ -30,13 +32,6 @@ const SAMPLE_LEVEL_TEXT := (
 	"1111111111111111111111\n"
 )
 
-## Level layer paths: TASK-014.04 composites the "level" pair from
-## game/content/levels/manifest.json (TASK-013.02) at the original 400x256
-## design resolution. Real level selection (menu vs. level, custom .dat
-## levels) is TASK-016's job; this hardcodes the "level" entry.
-const LEVEL_BACKGROUND := "res://content/levels/level_background.png"
-const LEVEL_FOREGROUND := "res://content/levels/level_foreground.png"
-
 ## The original design resolution (main.c's SCREEN_WIDTH/SCREEN_HEIGHT).
 ## game/project.godot's viewport_width/height mirror these for the
 ## canvas_items/keep stretch base; DESIGN_SIZE is the code-side source of
@@ -50,23 +45,12 @@ const DESIGN_SIZE := Vector2i(400, 256)
 ## window size rather than distorting it.
 const WINDOW_SCALE := 2
 
-## Drained events are read back at most this many per frame; comfortably
-## above core/game_loop.zig's own max_events_per_tick times a worst-case
-## catch-up tick count for a single _process() call.
-const EVENT_DRAIN_CAPACITY := 256
-
-var _world: SimWorld
-var _gate := false
-var _sprite_renderer: SpriteRenderer
-var _scoreboard_renderer: ScoreboardRenderer
-var _sfx_player: SfxPlayer
 var _music_player: MusicPlayer
-var _app_lifecycle: AppLifecycle
-var _audio_settings: AudioSettings
+var _sfx_player: SfxPlayer
 var _input_router: InputRouter
-var _input_left := 0
-var _input_right := 0
-var _input_jump := 0
+var _app_lifecycle: AppLifecycle
+var _screen_container: Node
+var _current_screen: Node
 
 
 ## Pure function (no Window/DisplayServer access) so window-sizing math is
@@ -87,36 +71,6 @@ func _apply_window_size() -> void:
 func _ready() -> void:
 	_apply_window_size()
 
-	_world = SimWorld.new()
-	var result := _world.init(1, false, SAMPLE_LEVEL_TEXT.to_utf8_buffer())
-	_gate = result == SimWorld.OK
-
-	# Child order is the draw order (CanvasItem default): background first,
-	# sprites in the middle, masked foreground last/on top (AC#2).
-	var background := Sprite2D.new()
-	background.name = "Background"
-	background.centered = false
-	background.texture = load(LEVEL_BACKGROUND)
-	add_child(background)
-
-	_sprite_renderer = SpriteRenderer.new()
-	_sprite_renderer.name = "SpriteRenderer"
-	add_child(_sprite_renderer)
-	_sprite_renderer.setup(_world)
-
-	var foreground := Sprite2D.new()
-	foreground.name = "Foreground"
-	foreground.centered = false
-	foreground.texture = load(LEVEL_FOREGROUND)
-	add_child(foreground)
-
-	# Scoreboard draws last (on top of the masked foreground) since it's HUD
-	# text/digits, not part of the level's own layering (TASK-014.05).
-	_scoreboard_renderer = ScoreboardRenderer.new()
-	_scoreboard_renderer.name = "ScoreboardRenderer"
-	add_child(_scoreboard_renderer)
-	_scoreboard_renderer.setup(_world)
-
 	_sfx_player = SfxPlayer.new()
 	_sfx_player.name = "SfxPlayer"
 	add_child(_sfx_player)
@@ -124,12 +78,13 @@ func _ready() -> void:
 	_music_player = MusicPlayer.new()
 	_music_player.name = "MusicPlayer"
 	add_child(_music_player)
-	_music_player.play("game")
 
-	_audio_settings = AudioSettings.new()
-	AudioSettings.apply_to_audio_server(_audio_settings.load_or_default())
+	var audio_settings := AudioSettings.new()
+	AudioSettings.apply_to_audio_server(audio_settings.load_or_default())
+	GameSettings.apply_to_audio_server(GameSettings.new().load_or_default())
 
-	# Stops music before the app actually quits (TASK-014.06 AC#4) --
+	# Stops music before the app actually quits (TASK-014.06 AC#4), no
+	# matter which screen is showing when the close request arrives --
 	# added as a child, not called directly, so _notification receives the
 	# real NOTIFICATION_WM_CLOSE_REQUEST the engine delivers to nodes.
 	_app_lifecycle = AppLifecycle.new(Callable(_music_player, "stop"))
@@ -139,33 +94,65 @@ func _ready() -> void:
 	_input_router = InputRouter.new()
 	_input_router.name = "InputRouter"
 	add_child(_input_router)
-	_input_router.input_updated.connect(_on_input_updated)
+
+	_screen_container = Node.new()
+	_screen_container.name = "ScreenContainer"
+	add_child(_screen_container)
+
+	_show_title()
 
 
-func _on_input_updated(left: int, right: int, jump: int) -> void:
-	_input_left = left
-	_input_right = right
-	_input_jump = jump
+func _swap_screen(screen: Node) -> void:
+	if _current_screen != null:
+		_current_screen.queue_free()
+	_current_screen = screen
+	_screen_container.add_child(screen)
 
 
-func _process(delta: float) -> void:
-	if _world == null:
-		return
-	TickDriver.advance_frame(_world, delta * 1000.0, true, _gate, _input_left, _input_right, _input_jump)
-	_drain_audio_events()
+func _show_title() -> void:
+	_music_player.play("menu")
+	var title := TitleScreen.new()
+	title.name = "TitleScreen"
+	title.start_requested.connect(_show_menu)
+	_swap_screen(title)
 
 
-## Draining once per frame (not per tick) is what makes SfxEventCoalescer's
-## per-frame dedup (AC#3) actually apply: a hitch that runs several ticks
-## inside one TickDriver.advance_frame call above still only reaches this
-## drain-and-play step once.
-func _drain_audio_events() -> void:
-	var drain: Dictionary = _world.event_drain(EVENT_DRAIN_CAPACITY)
-	if drain.get("result", -1) != SimWorld.OK:
-		return
-	var events: Array = drain.get("events", [])
-	for cue in SfxEventCoalescer.cues_for(events):
-		_sfx_player.play(cue)
-	var fly_events := SfxEventCoalescer.fly_volume_events_in(events)
-	if not fly_events.is_empty():
-		_sfx_player.apply_fly_volume(fly_events[-1]["volume"])
+func _show_menu() -> void:
+	_music_player.play("menu")
+	var menu := MenuScreen.new()
+	menu.name = "MenuScreen"
+	menu.set_input_router(_input_router)
+	menu.start_requested.connect(_start_match)
+	_swap_screen(menu)
+
+
+func _start_match(ai_mask: int) -> void:
+	var settings := GameSettings.new().load_or_default()
+	_music_player.play("game")
+
+	var gameplay := GameplayScreen.new()
+	gameplay.name = "GameplayScreen"
+	gameplay.match_ended.connect(_show_scores)
+	_swap_screen(gameplay)
+	gameplay.start(
+		{
+			"seed": 1,
+			"flies_enabled": settings["flies_enabled"],
+			"level_bytes": SAMPLE_LEVEL_TEXT.to_utf8_buffer(),
+			"player_count": settings["player_count"],
+			"ai_mask": ai_mask,
+			"no_gore": GameSettings.no_gore(settings),
+			"mirror_enabled": settings["mirror_enabled"],
+			"design_width": DESIGN_SIZE.x,
+		},
+		_sfx_player,
+		_input_router,
+	)
+
+
+func _show_scores(final_bumps: Array, enabled_slots: Array) -> void:
+	_music_player.play("scores")
+	var scores := ScoresScreen.new(final_bumps, enabled_slots)
+	scores.name = "ScoresScreen"
+	scores.continue_requested.connect(_show_menu)
+	_swap_screen(scores)

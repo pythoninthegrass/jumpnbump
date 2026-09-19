@@ -7,7 +7,7 @@ extends SceneTree
 ## first failed assertion (printed to stderr).
 
 var _failures := 0
-var _main_instance: Node
+var _gameplay_instance: GameplayScreen
 
 
 func _initialize() -> void:
@@ -22,11 +22,19 @@ func _initialize() -> void:
 
 	# Node._ready() is deferred to the next idle frame, not synchronous with
 	# add_child() -- instantiate now, but assert on the children from
-	# process_frame's one-shot callback below, once main.tscn's own
-	# _ready() has actually run and populated them.
-	var packed: PackedScene = load("res://main.tscn")
-	_main_instance = packed.instantiate()
-	get_root().add_child(_main_instance)
+	# process_frame's one-shot callback below, once GameplayScreen's own
+	# start() has actually run and populated them. Main.gd (TASK-015.04)
+	# no longer builds level layers itself at startup, so this exercises
+	# GameplayScreen directly instead of main.tscn.
+	_gameplay_instance = GameplayScreen.new()
+	get_root().add_child(_gameplay_instance)
+	var input_router := InputRouter.new()
+	get_root().add_child(input_router)
+	_gameplay_instance.start(
+		{"seed": 1, "flies_enabled": false, "level_bytes": Main.SAMPLE_LEVEL_TEXT.to_utf8_buffer(), "player_count": 0, "ai_mask": 0, "no_gore": false},
+		SfxPlayer.new(),
+		input_router,
+	)
 	process_frame.connect(_run_draw_order_test_once, CONNECT_ONE_SHOT)
 
 
@@ -177,11 +185,12 @@ func _test_disabled_and_unused_slots_are_skipped() -> void:
 ## since CanvasItem draw order is scene-tree child order, not something
 ## SpriteGeometry's pure functions touch.
 func _test_draw_order_background_sprites_foreground() -> void:
-	var background_index := _main_instance.get_node("Background").get_index()
-	var renderer_index := _main_instance.get_node("SpriteRenderer").get_index()
-	var foreground_index := _main_instance.get_node("Foreground").get_index()
+	var level_layers := _gameplay_instance.get_node("LevelLayers")
+	var background_index := level_layers.get_node("Background").get_index()
+	var renderer_index := level_layers.get_node("SpriteRenderer").get_index()
+	var foreground_index := level_layers.get_node("Foreground").get_index()
 
 	_assert(background_index < renderer_index, "Background must draw before (be an earlier sibling than) SpriteRenderer")
 	_assert(renderer_index < foreground_index, "SpriteRenderer must draw before (be an earlier sibling than) Foreground")
 
-	_main_instance.queue_free()
+	_gameplay_instance.queue_free()

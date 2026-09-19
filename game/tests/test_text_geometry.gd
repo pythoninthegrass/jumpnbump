@@ -7,7 +7,7 @@ extends SceneTree
 ## first failed assertion (printed to stderr).
 
 var _failures := 0
-var _main_instance: Node
+var _gameplay_instance: GameplayScreen
 
 
 func _initialize() -> void:
@@ -17,9 +17,18 @@ func _initialize() -> void:
 	_test_score_digits()
 	_test_build_score_draw_commands_against_real_numbers_atlas()
 
-	var packed: PackedScene = load("res://main.tscn")
-	_main_instance = packed.instantiate()
-	get_root().add_child(_main_instance)
+	# Main.gd (TASK-015.04) no longer builds level layers itself at
+	# startup, so this exercises GameplayScreen directly instead of
+	# main.tscn.
+	_gameplay_instance = GameplayScreen.new()
+	get_root().add_child(_gameplay_instance)
+	var input_router := InputRouter.new()
+	get_root().add_child(input_router)
+	_gameplay_instance.start(
+		{"seed": 1, "flies_enabled": false, "level_bytes": Main.SAMPLE_LEVEL_TEXT.to_utf8_buffer(), "player_count": 0, "ai_mask": 0, "no_gore": false},
+		SfxPlayer.new(),
+		input_router,
+	)
 	process_frame.connect(_run_scoreboard_scene_test_once, CONNECT_ONE_SHOT)
 
 
@@ -130,8 +139,13 @@ func _test_build_score_draw_commands_against_real_numbers_atlas() -> void:
 ## TASK-014.05's scoreboard should be present in the scene and draw on top
 ## of the masked foreground (it's HUD content, not part of level layering).
 func _test_scoreboard_renderer_wired_above_foreground() -> void:
-	var foreground_index := _main_instance.get_node("Foreground").get_index()
-	var scoreboard_index := _main_instance.get_node("ScoreboardRenderer").get_index()
-	_assert(foreground_index < scoreboard_index, "ScoreboardRenderer must draw after (be a later sibling than) Foreground")
+	# Foreground lives inside LevelLayers, a sibling of ScoreboardRenderer
+	# under GameplayScreen -- CanvasItem draws a parent's whole subtree
+	# before any later sibling, so LevelLayers (Foreground included)
+	# still draws entirely before ScoreboardRenderer as long as
+	# LevelLayers is the earlier sibling.
+	var level_layers_index := _gameplay_instance.get_node("LevelLayers").get_index()
+	var scoreboard_index := _gameplay_instance.get_node("ScoreboardRenderer").get_index()
+	_assert(level_layers_index < scoreboard_index, "ScoreboardRenderer must draw after (be a later sibling than) LevelLayers")
 
-	_main_instance.queue_free()
+	_gameplay_instance.queue_free()

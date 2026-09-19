@@ -8,7 +8,7 @@ extends SceneTree
 ## first failed assertion (printed to stderr).
 
 var _failures := 0
-var _main_instance: Node
+var _gameplay_instance: GameplayScreen
 
 
 func _initialize() -> void:
@@ -17,10 +17,19 @@ func _initialize() -> void:
 
 	# Node._ready() is deferred to the next idle frame -- instantiate now,
 	# assert on the populated children from process_frame's one-shot
-	# callback below, once main.tscn's own _ready() has actually run.
-	var packed: PackedScene = load("res://main.tscn")
-	_main_instance = packed.instantiate()
-	get_root().add_child(_main_instance)
+	# callback below, once GameplayScreen's own start() has actually run.
+	# Main.gd (TASK-015.04) no longer builds level layers itself at
+	# startup -- it shows TitleScreen first -- so this test exercises
+	# GameplayScreen directly instead of main.tscn.
+	_gameplay_instance = GameplayScreen.new()
+	get_root().add_child(_gameplay_instance)
+	var input_router := InputRouter.new()
+	get_root().add_child(input_router)
+	_gameplay_instance.start(
+		{"seed": 1, "flies_enabled": false, "level_bytes": Main.SAMPLE_LEVEL_TEXT.to_utf8_buffer(), "player_count": 0, "ai_mask": 0, "no_gore": false},
+		SfxPlayer.new(),
+		input_router,
+	)
 	process_frame.connect(_run_scene_checks_once, CONNECT_ONE_SHOT)
 
 
@@ -58,15 +67,15 @@ func _test_compute_window_size_scales_with_display_scale() -> void:
 
 ## AC#1: the level renders at the original 400x256 design resolution.
 func _test_background_and_foreground_are_400x256() -> void:
-	var background: Sprite2D = _main_instance.get_node("Background")
-	var foreground: Sprite2D = _main_instance.get_node("Foreground")
+	var background: Sprite2D = _gameplay_instance.get_node("LevelLayers/Background")
+	var foreground: Sprite2D = _gameplay_instance.get_node("LevelLayers/Foreground")
 
 	_assert(background.texture != null, "Background must have a texture loaded")
 	_assert(foreground.texture != null, "Foreground must have a texture loaded")
 	_assert(background.texture.get_size() == Vector2(400, 256), "Background texture should be 400x256, got %s" % background.texture.get_size())
 	_assert(foreground.texture.get_size() == Vector2(400, 256), "Foreground texture should be 400x256, got %s" % foreground.texture.get_size())
 
-	_main_instance.queue_free()
+	_gameplay_instance.queue_free()
 
 
 ## AC#2: letterboxing on window resize without stretching distortion comes
