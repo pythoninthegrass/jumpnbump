@@ -63,6 +63,10 @@ var _sfx_player: SfxPlayer
 var _music_player: MusicPlayer
 var _app_lifecycle: AppLifecycle
 var _audio_settings: AudioSettings
+var _input_router: InputRouter
+var _input_left := 0
+var _input_right := 0
+var _input_jump := 0
 
 
 ## Pure function (no Window/DisplayServer access) so window-sizing math is
@@ -132,11 +136,22 @@ func _ready() -> void:
 	_app_lifecycle.name = "AppLifecycle"
 	add_child(_app_lifecycle)
 
+	_input_router = InputRouter.new()
+	_input_router.name = "InputRouter"
+	add_child(_input_router)
+	_input_router.input_updated.connect(_on_input_updated)
+
+
+func _on_input_updated(left: int, right: int, jump: int) -> void:
+	_input_left = left
+	_input_right = right
+	_input_jump = jump
+
 
 func _process(delta: float) -> void:
 	if _world == null:
 		return
-	TickDriver.advance_frame(_world, delta * 1000.0, true, _gate)
+	TickDriver.advance_frame(_world, delta * 1000.0, true, _gate, _input_left, _input_right, _input_jump)
 	_drain_audio_events()
 
 
