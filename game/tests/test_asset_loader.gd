@@ -19,6 +19,7 @@ const JNB_ASSET_SCREEN_H := 256
 ## the JumpnbumpWorld GDExtension class at all, constants included.
 const JNB_OK := 0
 const JNB_ERR_INVALID_ARGUMENT := 1
+const JNB_ERR_ASSET_DECODE_FAILED := 6
 
 
 func _jumpbump_dat_path() -> String:
@@ -70,6 +71,12 @@ func test_load_dat_decodes_sprites_level_and_menu_from_the_real_archive() -> voi
 	var first_digit := levelmap_bytes.get_string_from_utf8().substr(0, 1)
 	assert_bool(first_digit in ["0", "1", "2", "3", "4"]).is_true()
 
+	# TASK-016.03: raw .mod passthrough (not decoded here -- see render_mod()).
+	var mods: Dictionary = out["mods"]
+	for name in ["bump", "jump", "scores"]:
+		assert_bool(mods.has(name)).is_true()
+		assert_int((mods[name] as PackedByteArray).size()).is_greater(0)
+
 
 func test_load_dat_reports_invalid_argument_for_a_missing_file() -> void:
 	var out: Dictionary = JumpnbumpAssetLoader.load_dat("res://does_not_exist.dat")
@@ -105,3 +112,41 @@ func test_load_dat_reports_decode_failure_for_a_corrupt_archive() -> void:
 
 	DirAccess.remove_absolute(path)
 	DirAccess.remove_absolute(dir)
+
+
+## TASK-016.03: JumpnbumpAssetLoader.render_mod() renders a raw .mod's bytes
+## (one of load_dat()'s "mods" entries) into a looping AudioStreamWAV, through
+## core/mod_player.zig via jnb_mod_count_frames/jnb_mod_render. Exercised
+## against the repo's own data/bump.mod -- see that module's header comment
+## for its documented "minimal player" scope and backlog task TASK-016.03's
+## implementation notes for the manual verification a real listening test
+## would require, which isn't possible in this headless environment.
+func test_render_mod_produces_a_looping_audio_stream_from_the_real_bump_mod() -> void:
+	var game_dir: String = ProjectSettings.globalize_path("res://").rstrip("/")
+	var mod_path := game_dir.get_base_dir().path_join("data/bump.mod")
+	var file := FileAccess.open(mod_path, FileAccess.READ)
+	var mod_bytes := file.get_buffer(file.get_length())
+	file.close()
+
+	var start_usec := Time.get_ticks_usec()
+	var out: Dictionary = JumpnbumpAssetLoader.render_mod(mod_bytes)
+	var elapsed_ms := (Time.get_ticks_usec() - start_usec) / 1000.0
+
+	assert_int(out["result"]).is_equal(JNB_OK)
+	assert_float(elapsed_ms).is_less(5000.0)
+
+	var stream: AudioStreamWAV = out["stream"]
+	assert_int(stream.mix_rate).is_equal(44100)
+	assert_bool(stream.stereo).is_true()
+	assert_int(stream.format).is_equal(AudioStreamWAV.FORMAT_16_BITS)
+	assert_int(stream.loop_mode).is_equal(AudioStreamWAV.LOOP_FORWARD)
+	assert_int(stream.loop_begin).is_equal(0)
+	assert_int(stream.loop_end).is_greater(0)
+	# 16-bit stereo: 4 bytes/frame.
+	assert_int(stream.data.size()).is_equal(stream.loop_end * 4)
+
+
+func test_render_mod_reports_decode_failure_for_a_non_mod_buffer() -> void:
+	var garbage := PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0])
+	var out: Dictionary = JumpnbumpAssetLoader.render_mod(garbage)
+	assert_int(out["result"]).is_equal(JNB_ERR_ASSET_DECODE_FAILED)

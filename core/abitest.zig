@@ -785,3 +785,108 @@ test "jnb_level_layers_build composites background/foreground and enforces fixed
     );
 }
 
+// A minimal 4-channel M.K. .mod: one sample (4 bytes of PCM, no loop), one
+// pattern (row 0 channel 0 plays that sample; row 0 channel 1 carries a
+// pattern-break so the song ends after one row instead of playing all 64
+// mostly-silent rows of the pattern). Independently constructed from
+// core/mod_player.zig's own `buildMinimalMod` test fixture (this file may
+// only @import "std" -- tools/validate_abi_test_purity.py), same byte
+// layout documented there.
+fn buildModBytes(allocator: std.mem.Allocator) ![]u8 {
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(allocator);
+
+    try buf.appendNTimes(allocator, 0, 20); // title
+    try buf.appendNTimes(allocator, 0, 22); // sample 1 name
+    try buf.append(allocator, 0x00);
+    try buf.append(allocator, 0x02); // length = 2 words = 4 bytes
+    try buf.append(allocator, 0x00); // finetune
+    try buf.append(allocator, 64); // volume
+    try buf.append(allocator, 0x00);
+    try buf.append(allocator, 0x00); // repeat offset
+    try buf.append(allocator, 0x00);
+    try buf.append(allocator, 0x01); // repeat length = 1 word (no loop)
+    for (0..30) |_| {
+        try buf.appendNTimes(allocator, 0, 22);
+        try buf.appendNTimes(allocator, 0, 8);
+    }
+    try buf.append(allocator, 1); // song_length
+    try buf.append(allocator, 0); // restart byte (unused)
+    try buf.appendNTimes(allocator, 0, 128); // position order: all pattern 0
+    try buf.appendSlice(allocator, "M.K.");
+
+    const num_channels = 4;
+    const pattern_bytes = 64 * num_channels * 4;
+    var pattern: [pattern_bytes]u8 = [_]u8{0} ** pattern_bytes;
+    pattern[0] = 0x01; // period high nibble
+    pattern[1] = 0xAC; // period low byte -> period 0x1AC = 428
+    pattern[2] = 0x10; // sample number low nibble = 1
+    pattern[4 + 2] = 0x0D; // channel 1, row 0: effect D (pattern break)
+    pattern[4 + 3] = 0x00; // break to row 0 of the next order
+    try buf.appendSlice(allocator, &pattern);
+
+    try buf.appendSlice(allocator, &[_]u8{ 10, 20, 30, 40 }); // sample 1's PCM
+
+    return buf.toOwnedSlice(allocator);
+}
+
+test "jnb_mod_count_frames and jnb_mod_render two-call length-then-fill contract" {
+    const allocator = std.testing.allocator;
+    const mod_bytes = try buildModBytes(allocator);
+    defer allocator.free(mod_bytes);
+
+    var required: usize = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_mod_count_frames(mod_bytes.ptr, mod_bytes.len, 44100, &required),
+    );
+    // One row at the default speed=6/tempo=125: 6 * 2.5/125 * 44100 = 5292
+    // stereo frames (matches core/mod_player.zig's own render test).
+    try std.testing.expectEqual(@as(usize, 5292), required);
+
+    // NULL/0-capacity call on jnb_mod_render: reports the length without rendering.
+    var reported: usize = 0;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_mod_render(mod_bytes.ptr, mod_bytes.len, 44100, null, 0, &reported),
+    );
+    try std.testing.expectEqual(required, reported);
+
+    // Too-small nonzero capacity: JNB_ERR_BUFFER_TOO_SMALL, required still reported.
+    var too_small: [4]i16 = undefined;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_BUFFER_TOO_SMALL),
+        c.jnb_mod_render(mod_bytes.ptr, mod_bytes.len, 44100, &too_small, too_small.len, &reported),
+    );
+    try std.testing.expectEqual(required, reported);
+
+    const pcm = try allocator.alloc(i16, required * 2);
+    defer allocator.free(pcm);
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_OK),
+        c.jnb_mod_render(mod_bytes.ptr, mod_bytes.len, 44100, pcm.ptr, pcm.len, &reported),
+    );
+    try std.testing.expectEqual(required, reported);
+
+    var saw_nonzero = false;
+    for (pcm) |s| {
+        if (s != 0) {
+            saw_nonzero = true;
+            break;
+        }
+    }
+    try std.testing.expect(saw_nonzero);
+}
+
+test "jnb_mod_count_frames and jnb_mod_render report JNB_ERR_ASSET_DECODE_FAILED on a non-.mod buffer" {
+    var required: usize = 0;
+    const garbage = [_]u8{0} ** 8;
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_ASSET_DECODE_FAILED),
+        c.jnb_mod_count_frames(&garbage, garbage.len, 44100, &required),
+    );
+    try std.testing.expectEqual(
+        @as(c.jnb_result, c.JNB_ERR_ASSET_DECODE_FAILED),
+        c.jnb_mod_render(&garbage, garbage.len, 44100, null, 0, &required),
+    );
+}

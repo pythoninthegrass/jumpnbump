@@ -69,8 +69,11 @@ extern "C" {
  *
  * 2: added the jnb_dat_find / jnb_gob_... / jnb_level_layers_... surface
  * (TASK-016.01, runtime .dat asset decoding) alongside the pre-existing
- * jnb_world_... simulation surface. jnb_config's own layout is unchanged. */
-#define JNB_ABI_VERSION 2u
+ * jnb_world_... simulation surface. jnb_config's own layout is unchanged.
+ * 3: added jnb_mod_count_frames / jnb_mod_render (TASK-016.03, runtime
+ * .mod playback for custom-level music). No existing struct or function
+ * changed. */
+#define JNB_ABI_VERSION 3u
 
 /* core/world.zig's fixed simulation dimensions (JNB_MAX_PLAYERS,
  * NUM_OBJECTS, and the ban_map's 17x22 grid — 17 rows because
@@ -480,6 +483,45 @@ jnb_result jnb_level_layers_build(
     size_t background_capacity,
     uint8_t *out_foreground_rgba,
     size_t foreground_capacity
+);
+
+/* ---------------------------------------------------------------------- */
+/* Runtime .mod music playback (TASK-016.03)                               */
+/*                                                                         */
+/* Pure buffer-in/buffer-out, same discipline as the asset-decoding        */
+/* surface above: no world, no allocation visible to the caller, no file   */
+/* I/O. core/mod_player.zig is a minimal ProTracker/NoiseTracker player    */
+/* written from scratch for this ABI -- see that file's header comment for */
+/* its documented scope (supported signatures/effects) and the reasoning   */
+/* behind its "render the whole song once" playback model, which mirrors   */
+/* tools/render_music.py's build-time OGG rendering for the base game's    */
+/* own three tracks. mod_buf is a raw, already-decompressed .mod file      */
+/* (e.g. one of jnb_dat_find's results against a custom .dat archive).     */
+/* ---------------------------------------------------------------------- */
+
+/* Number of interleaved 16-bit stereo frames jnb_mod_render would produce
+ * for (mod_buf, sample_rate_hz) -- use this to size out_pcm_i16 before
+ * calling jnb_mod_render (the two-call length-then-fill convention,
+ * matching jnb_gob_atlas_build/jnb_objects_copy). Returns
+ * JNB_ERR_ASSET_DECODE_FAILED if mod_buf isn't a recognized .mod file
+ * (core/mod_player.zig's parse(), standard 31-instrument signatures only). */
+jnb_result jnb_mod_count_frames(const uint8_t *mod_buf, size_t mod_len, uint32_t sample_rate_hz, size_t *out_frame_count);
+
+/* Renders mod_buf's position-order table exactly once (module doc comment
+ * in core/mod_player.zig) into out_pcm_i16, an interleaved 16-bit stereo
+ * PCM buffer. pcm_capacity counts int16_t elements (not frames, and not
+ * bytes) -- out_pcm_i16 must hold at least
+ * jnb_mod_count_frames(mod_buf, ..., sample_rate_hz) * 2 of them. Returns
+ * JNB_ERR_BUFFER_TOO_SMALL if pcm_capacity is too small (still setting
+ * *out_frame_count to the required frame count), or
+ * JNB_ERR_ASSET_DECODE_FAILED if mod_buf isn't a recognized .mod file. */
+jnb_result jnb_mod_render(
+    const uint8_t *mod_buf,
+    size_t mod_len,
+    uint32_t sample_rate_hz,
+    int16_t *out_pcm_i16,
+    size_t pcm_capacity,
+    size_t *out_frame_count
 );
 
 #ifdef __cplusplus

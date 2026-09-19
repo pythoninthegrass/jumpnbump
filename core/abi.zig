@@ -61,6 +61,7 @@ const cpu_move_mod = @import("cpu_move.zig");
 const flies_mod = @import("flies.zig");
 const dat = @import("dat.zig");
 const asset_runtime = @import("asset_runtime.zig");
+const mod_player = @import("mod_player.zig");
 
 const max_players = world.max_players;
 const num_objects = world.num_objects;
@@ -124,7 +125,7 @@ pub const JNB_ERR_LEVEL_PARSE_FAILED: Result = 4;
 pub const JNB_ERR_ASSET_NOT_FOUND: Result = 5;
 pub const JNB_ERR_ASSET_DECODE_FAILED: Result = 6;
 
-const JNB_ABI_VERSION: u16 = 2;
+const JNB_ABI_VERSION: u16 = 3;
 
 const JNB_EVENT_SFX: u8 = 1;
 const JNB_EVENT_OBJECT_SPAWN: u8 = 2;
@@ -657,5 +658,49 @@ export fn jnb_level_layers_build(
         bg[0..background_capacity],
         fg[0..foreground_capacity],
     ) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    return JNB_OK;
+}
+
+// Runtime .mod music playback (TASK-016.03). Same page_allocator-scratch
+// discipline as the asset-decoding functions above: core/mod_player.zig's
+// parse() duplicates mod_buf internally, freed via defer before this
+// returns -- no allocation crosses the ABI boundary except the caller's own
+// out_pcm_i16 buffer.
+
+export fn jnb_mod_count_frames(mod_buf: ?[*]const u8, mod_len: usize, sample_rate_hz: u32, out_frame_count: ?*usize) callconv(.c) Result {
+    const buf = mod_buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const out = out_frame_count orelse return JNB_ERR_INVALID_ARGUMENT;
+
+    var mf = mod_player.parse(std.heap.page_allocator, buf[0..mod_len]) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    defer mf.deinit();
+
+    out.* = mod_player.countFrames(&mf, sample_rate_hz);
+    return JNB_OK;
+}
+
+export fn jnb_mod_render(
+    mod_buf: ?[*]const u8,
+    mod_len: usize,
+    sample_rate_hz: u32,
+    out_pcm_i16: ?[*]i16,
+    pcm_capacity: usize,
+    out_frame_count: ?*usize,
+) callconv(.c) Result {
+    const buf = mod_buf orelse return JNB_ERR_INVALID_ARGUMENT;
+    const required = out_frame_count orelse return JNB_ERR_INVALID_ARGUMENT;
+
+    var mf = mod_player.parse(std.heap.page_allocator, buf[0..mod_len]) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    defer mf.deinit();
+
+    required.* = mod_player.countFrames(&mf, sample_rate_hz);
+    if (out_pcm_i16 == null or pcm_capacity == 0) return JNB_OK;
+    if (pcm_capacity < required.* * 2) return JNB_ERR_BUFFER_TOO_SMALL;
+
+    const pcm = mod_player.renderToPcm(std.heap.page_allocator, &mf, sample_rate_hz) catch return JNB_ERR_ASSET_DECODE_FAILED;
+    defer std.heap.page_allocator.free(pcm);
+
+    const out = out_pcm_i16.?;
+    @memcpy(out[0..pcm.len], pcm);
+    required.* = pcm.len / 2;
     return JNB_OK;
 }

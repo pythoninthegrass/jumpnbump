@@ -8,6 +8,7 @@ extends SceneTree
 
 var _failures := 0
 var _sfx_player: SfxPlayer
+var _music_player: MusicPlayer
 
 
 func _initialize() -> void:
@@ -29,11 +30,14 @@ func _initialize() -> void:
 	# one test that calls play() once _ready() has actually fired.
 	_sfx_player = SfxPlayer.new()
 	get_root().add_child(_sfx_player)
+	_music_player = MusicPlayer.new()
+	get_root().add_child(_music_player)
 	process_frame.connect(_run_deferred_checks_once, CONNECT_ONE_SHOT)
 
 
 func _run_deferred_checks_once() -> void:
 	_test_sfx_player_loads_every_cue_including_fly()
+	_test_music_player_play_custom_plays_a_runtime_stream()
 
 	if _failures > 0:
 		push_error("%d test_audio assertion(s) failed" % _failures)
@@ -127,6 +131,33 @@ func _test_music_player_track_map_matches_committed_assets() -> void:
 	for track: String in MusicPlayer.TRACKS:
 		var path: String = MusicPlayer.TRACKS[track]
 		_assert(ResourceLoader.exists(path), "MusicPlayer track %s points at missing asset %s" % [track, path])
+
+
+## TASK-016.03: play_custom() plays a runtime-rendered stream (a custom
+## level's own decoded .mod, via JumpnbumpAssetLoader.render_mod()) directly,
+## bypassing the TRACKS name lookup, and a later play(track) call for a
+## still-tracked name isn't mistaken for a no-op just because something is
+## already playing.
+func _test_music_player_play_custom_plays_a_runtime_stream() -> void:
+	var player := _music_player
+	# A tiny silent stream stands in for a real render_mod() result here --
+	# this test is about play_custom()'s wiring (which stream plays, that
+	# _current_track resets), not about mod_player.zig's decode correctness
+	# (covered by test_asset_loader.gd's real-bump.mod render_mod test).
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.stereo = true
+	stream.mix_rate = 44100
+	stream.data = PackedByteArray([0, 0, 0, 0])
+
+	player.play_custom(stream)
+	_assert(player.is_playing(), "play_custom() should start playback")
+	_assert(player._player.stream == stream, "play_custom() should set the player's stream to the given one")
+
+	# play("game") must not no-op just because something (the custom stream)
+	# happens to already be playing -- _current_track was cleared.
+	player.play("game")
+	_assert(player._player.stream != stream, "play(\"game\") after play_custom() should switch away from the custom stream")
 
 
 func _test_audio_settings_round_trips_through_a_temp_dir() -> void:

@@ -3,6 +3,7 @@
 #include <cstring>
 #include <vector>
 
+#include <godot_cpp/classes/audio_stream_wav.hpp>
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -110,10 +111,13 @@ Dictionary decode_layer_pair(const PackedByteArray &dat_bytes, const char *bg_na
 	return out;
 }
 
+constexpr uint32_t kModSampleRateHz = 44100;
+
 } // namespace
 
 void JumpnbumpAssetLoader::_bind_methods() {
 	ClassDB::bind_static_method(get_class_static(), D_METHOD("load_dat", "dat_path"), &JumpnbumpAssetLoader::load_dat);
+	ClassDB::bind_static_method(get_class_static(), D_METHOD("render_mod", "mod_bytes"), &JumpnbumpAssetLoader::render_mod);
 }
 
 Dictionary JumpnbumpAssetLoader::load_dat(const String &dat_path) {
@@ -164,12 +168,60 @@ Dictionary JumpnbumpAssetLoader::load_dat(const String &dat_path) {
 		memcpy(levelmap_bytes.ptrw(), dat_bytes.ptr() + levelmap_offset, levelmap_size);
 	}
 
+	Dictionary mods;
+	static const char *mod_names[] = { "bump.mod", "jump.mod", "scores.mod" };
+	for (const char *name : mod_names) {
+		size_t offset = 0, size = 0;
+		if (!find_entry(dat_bytes, name, &offset, &size)) {
+			continue;
+		}
+		PackedByteArray mod_bytes;
+		mod_bytes.resize(static_cast<int>(size));
+		memcpy(mod_bytes.ptrw(), dat_bytes.ptr() + offset, size);
+		String key = String(name).get_basename();
+		mods[key] = mod_bytes;
+	}
+
 	Dictionary out;
 	out["result"] = JNB_OK;
 	out["sprites"] = sprites;
 	out["level"] = level;
 	out["menu"] = menu;
 	out["levelmap_bytes"] = levelmap_bytes;
+	out["mods"] = mods;
+	return out;
+}
+
+Dictionary JumpnbumpAssetLoader::render_mod(const PackedByteArray &mod_bytes) {
+	size_t frame_count = 0;
+	jnb_result result = jnb_mod_count_frames(mod_bytes.ptr(), static_cast<size_t>(mod_bytes.size()), kModSampleRateHz, &frame_count);
+	if (result != JNB_OK) {
+		return make_error(result);
+	}
+
+	std::vector<int16_t> pcm(frame_count * 2);
+	result = jnb_mod_render(mod_bytes.ptr(), static_cast<size_t>(mod_bytes.size()), kModSampleRateHz, pcm.data(), pcm.size(), &frame_count);
+	if (result != JNB_OK) {
+		return make_error(result);
+	}
+
+	PackedByteArray pcm_bytes;
+	pcm_bytes.resize(static_cast<int>(pcm.size() * sizeof(int16_t)));
+	memcpy(pcm_bytes.ptrw(), pcm.data(), pcm_bytes.size());
+
+	Ref<AudioStreamWAV> stream;
+	stream.instantiate();
+	stream->set_format(AudioStreamWAV::FORMAT_16_BITS);
+	stream->set_stereo(true);
+	stream->set_mix_rate(static_cast<int32_t>(kModSampleRateHz));
+	stream->set_data(pcm_bytes);
+	stream->set_loop_mode(AudioStreamWAV::LOOP_FORWARD);
+	stream->set_loop_begin(0);
+	stream->set_loop_end(static_cast<int32_t>(frame_count));
+
+	Dictionary out;
+	out["result"] = JNB_OK;
+	out["stream"] = stream;
 	return out;
 }
 

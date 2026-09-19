@@ -59,6 +59,12 @@ var _current_screen: Node
 var _selected_level_payload: Dictionary = {}
 var _selected_level_name := "Built-in Level"
 
+## jnb_result JNB_OK (include/jumpnbump.h) -- local copy, matching
+## level_validator.gd/sprite_geometry.gd's own convention, since
+## tools/validate_game_boundary.py forbids referencing JumpnbumpWorld
+## constants from outside game/simulation/.
+const JNB_OK := 0
+
 
 ## Pure function (no Window/DisplayServer access) so window-sizing math is
 ## unit-testable without a live window, matching neo_snake's
@@ -205,9 +211,27 @@ func _on_level_selected(payload: Dictionary, display_name: String) -> void:
 	_show_menu()
 
 
+## TASK-016.03: a custom level's own bump.mod (main.c's MOD_GAME context,
+## the only one of the three base-game tracks GameplayScreen actually drives
+## -- see MusicPlayer.gd's own header comment) replaces the built-in
+## bump.ogg when present and it renders successfully; any decode failure
+## (JumpnbumpAssetLoader.render_mod()'s "result" isn't JNB_OK, e.g. the
+## bundled file isn't a MOD variant core/mod_player.zig recognizes) falls
+## back to the built-in track rather than leaving gameplay silent.
+func _play_gameplay_music() -> void:
+	var mods: Dictionary = _selected_level_payload.get("mods", {})
+	var mod_bytes: PackedByteArray = mods.get("bump", PackedByteArray())
+	if not mod_bytes.is_empty():
+		var rendered: Dictionary = JumpnbumpAssetLoader.render_mod(mod_bytes)
+		if rendered.get("result", -1) == JNB_OK:
+			_music_player.play_custom(rendered["stream"])
+			return
+	_music_player.play("game")
+
+
 func _start_match(ai_mask: int) -> void:
 	var settings := GameSettings.new().load_or_default()
-	_music_player.play("game")
+	_play_gameplay_music()
 
 	var gameplay := GameplayScreen.new()
 	gameplay.name = "GameplayScreen"

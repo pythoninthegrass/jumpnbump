@@ -50,6 +50,20 @@ func play(track: String) -> void:
 	_player.play()
 
 
+## TASK-016.03: plays a runtime-rendered stream (JumpnbumpAssetLoader
+## .render_mod()'s output, a looping custom .mod track) in place of one of
+## the static TRACKS entries -- used when the currently selected level
+## bundles its own music. Bypasses the track-name/no-op-if-already-playing
+## logic in play() entirely, since there's no name to compare against; a
+## later play(track) call always restarts (clearing _current_track here
+## ensures play() doesn't mistake a still-playing custom stream for that
+## track already playing).
+func play_custom(stream: AudioStream) -> void:
+	_player.stream = stream
+	_current_track = ""
+	_player.play()
+
+
 func stop() -> void:
 	_player.stop()
 	_current_track = ""
