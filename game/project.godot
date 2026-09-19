@@ -26,3 +26,7 @@ window/size/viewport_width=400
 window/size/viewport_height=256
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true
