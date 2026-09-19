@@ -7,6 +7,14 @@ version: "3.0"
 tasks:
   build-abi:
     desc: "Build core/zig-out/lib/libjumpnbump.a (core/abi.zig's frozen jnb_* symbol surface)"
+    summary: |
+      Runs `zig build abi` from core/, producing the static library that
+      extension:build links into the GDExtension shim. Freshness-checked
+      via sources/generates: skipped if no core/**/*.zig file changed
+      since the last build.
+
+      Example:
+        task core:build-abi
     dir: core
     cmds:
       - zig build abi

@@ -28,9 +28,12 @@ Requires the pinned Godot version (see `.tool-versions`, installed via `mise`) a
 `PATH` as `godot`.
 
 ```sh
-task check      # boundary + test gates for the Godot build and the asset pipeline
-task game:run   # launch the game
+task run    # fetch git submodules, build the core ABI + GDExtension shim, launch the game
 ```
+
+`task check` runs the boundary + test gates for the Godot build and the asset pipeline.
+`task deps`/`task submodules` fetches just the git submodules (`third_party/godot-cpp`) on
+their own; `task game:run` launches the game without rebuilding anything.
 
 ### Controls
 

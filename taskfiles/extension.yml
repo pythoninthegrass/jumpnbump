@@ -5,17 +5,18 @@ version: "3.0"
 # TASK-012.04/.05: builds the godot-cpp GDExtension shim (see docs/build-layout.md).
 
 tasks:
-  _vendor-godot-cpp:
-    internal: true
-    desc: "Fetch the pinned third_party/godot-cpp submodule (TASK-004) if it isn't checked out yet"
-    cmds:
-      - git submodule update --init --recursive -- third_party/godot-cpp
-    status:
-      - test -f third_party/godot-cpp/SConstruct
-
   build:
-    desc: "Build the GDExtension shim for the current platform (template_debug), pulling in core:build-abi first"
-    deps: ["_vendor-godot-cpp", ":core:build-abi"]
+    desc: "Build the GDExtension shim for the current platform (template_debug), pulling in :submodules and core:build-abi first"
+    summary: |
+      Builds game/bin/libjumpnbump.<platform>.template_debug[.<arch>]
+      via `scons target=template_debug platform=...`, using Task's own
+      `platforms:` key on each cmd (not a shell case statement) to pick
+      linux/macos/windows for the current OS -- the other two cmds are
+      silently skipped. Pulls in :submodules and core:build-abi first.
+
+      Example:
+        task extension:build
+    deps: [":submodules", ":core:build-abi"]
     dir: extension
     cmds:
       - cmd: scons target=template_debug platform=linux

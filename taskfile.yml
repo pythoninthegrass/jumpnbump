@@ -28,8 +28,46 @@ tasks:
     cmds:
       - task --list
 
+  submodules:
+    desc: "Fetch git submodules (third_party/godot-cpp) if any aren't checked out yet"
+    summary: |
+      Fetches every git submodule this repo vendors (currently just
+      third_party/godot-cpp, TASK-004) via `git submodule update --init
+      --recursive`. Idempotent: skipped if every submodule is already
+      checked out.
+
+      Example:
+        task submodules
+    cmds:
+      - git submodule update --init --recursive
+    status:
+      - test -z "$(git submodule status | grep '^-')"
+
+  deps:
+    desc: "Fetch every prerequisite the build needs (currently: git submodules)"
+    summary: |
+      Meta task aggregating every fetch-only prerequisite the build
+      needs before it can compile anything -- currently just
+      `submodules`. New prerequisite tasks (e.g. a future toolchain
+      check) get added here as another `task:` entry, not folded into
+      this task's own cmds.
+
+      Example:
+        task deps
+    cmds:
+      - task: submodules
+
   check:
     desc: "The one documented build/test command: the Godot build's boundary/test gates and the asset pipeline's reproducibility gates (TASK-015.05 -- the legacy SDL build is no longer part of the default gate, see `task legacy:build`)"
+    summary: |
+      Runs every reproducibility/test gate that's portable across CI
+      platforms: the asset pipeline's checks, the Godot build's
+      simulation-boundary check, and its full test suite. Does NOT
+      build or run the legacy SDL binary (see `task legacy:build`) or
+      the GDExtension shim (see `task extension:build` / `task run`).
+
+      Example:
+        task check
     cmds:
       - task: assets:check
       - task: game:boundary-check
@@ -37,6 +75,15 @@ tasks:
 
   run:
     desc: "Build everything the Godot build needs (submodule, core ABI, GDExtension shim for the current platform) and launch the game -- the one-shot way to just play it"
+    summary: |
+      The one-shot way to go from a clean clone to a playable game:
+      fetches git submodules, builds core/'s C ABI, builds the
+      GDExtension shim for the current platform, then launches Godot.
+      Each step is idempotent, so re-running this after the first time
+      only rebuilds what actually changed.
+
+      Example:
+        task run
     cmds:
       - task: extension:build
       - task: game:run
