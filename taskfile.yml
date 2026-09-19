@@ -20,6 +20,7 @@ includes:
   ci: taskfiles/ci.yml
   assets: taskfiles/assets.yml
   game: taskfiles/game.yml
+  legacy: taskfiles/legacy.yml
 
 tasks:
   default:
@@ -28,9 +29,8 @@ tasks:
       - task --list
 
   check:
-    desc: "The one documented build/test command (legacy make build + the asset pipeline's reproducibility gates)"
+    desc: "The one documented build/test command: the Godot build's boundary/test gates and the asset pipeline's reproducibility gates (TASK-015.05 -- the legacy SDL build is no longer part of the default gate, see `task legacy:build`)"
     cmds:
-      - make
       - task: assets:check
       - task: game:boundary-check
       - task: game:test

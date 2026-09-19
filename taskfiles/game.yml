@@ -5,6 +5,11 @@ version: "3.0"
 # TASK-014: the Godot 4.7.1 project under game/.
 
 tasks:
+  run:
+    desc: "Run the Godot build (TASK-015.05): the primary way to play Jump'n'Bump"
+    cmds:
+      - godot --path game
+
   bootstrap:
     desc: "Install gdUnit4, the Tier-D test framework (checksum-verified download, TASK-014.07)"
     cmds:

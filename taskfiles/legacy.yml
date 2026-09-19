@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3.0"
+
+# The legacy SDL 1.2 C build (main.c, sdl/, modify/, data/) is kept forever
+# as the Phase 1 differential-test oracle (TASK-008), but TASK-015.05
+# retires it from the default `task check` gate and from being shipped as
+# a user-facing artifact -- the Godot build (`task game:run`) is that now.
+# This task file is how you still build it on demand.
+
+tasks:
+  build:
+    desc: "Build the legacy SDL jumpnbump binary on demand (difftest oracle, or to actually run the pre-Godot build) -- not part of the default `task check` gate"
+    cmds:
+      - make
+
+  clean:
+    desc: "Clean the legacy SDL build's objects/binaries"
+    cmds:
+      - make clean

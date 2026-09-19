@@ -23,9 +23,10 @@ tasks:
       - for pkg in {{.LINUX_APT_PKGS}}; do dpkg -s "$pkg" >/dev/null 2>&1 || exit 1; done
 
   linux-check:
-    desc: "Linux CI entrypoint: install deps, then run the documented build/test gate"
+    desc: "Linux CI entrypoint: install deps, verify the legacy oracle still builds, then run the documented build/test gate"
     deps: ["_install-linux-deps"]
     cmds:
+      - task: :legacy:build
       - task: :check
 
   _install-macos-deps:
@@ -64,7 +65,8 @@ tasks:
       - test -e "$(brew --prefix)/lib/libSDL_net.dylib"
 
   macos-check:
-    desc: "macOS CI entrypoint: install deps, then run the documented build/test gate"
+    desc: "macOS CI entrypoint: install deps, verify the legacy oracle still builds, then run the documented build/test gate"
     deps: ["_install-macos-deps"]
     cmds:
+      - task: :legacy:build
       - task: :check

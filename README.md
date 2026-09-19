@@ -1,58 +1,54 @@
 # Jump'n'Bump
 
 Cute fluffy bunnies hop on each other's heads. Whoever bumps the most heads wins. Local
-multiplayer (up to 4 players), custom levels, and UDP netplay. Originally released by
-Brainchild Design in 1998; this fork is a Linux/SDL port from 2004 that's now being
-re-platformed onto a Zig simulation core rendered by Godot.
+multiplayer (up to 4 players, human or AI, any mix), custom levels, and UDP netplay (legacy
+build only, see below). Originally released by Brainchild Design in 1998; this fork is a
+Linux/SDL port from 2004 that's been re-platformed onto a Zig simulation core rendered by
+Godot.
 
 ## Status
 
-This repo is **mid-port**. The target architecture (below) is scaffolding today, not a
-working build:
+The Godot build is now the primary, fully playable way to run Jump'n'Bump: a Zig simulation
+core (`core/`) is exposed to Godot through a frozen C ABI (`include/jumpnbump.h`) and a
+GDExtension shim (`extension/`), and `game/` wires that up into a full title -> menu ->
+gameplay -> scores -> menu flow with 4-local-player input (keyboard + gamepad, remappable),
+persisted settings, and pause/clean-quit handling.
 
-- `core/`, `include/`, `extension/`, `game/`, `tools/` exist with the intended layout and
-  `core/build.zig`'s four steps (`test`, `difftest`, `abi`, `abitest`) are wired up, but no
-  simulation code has been ported yet — `core/abi.zig` is still empty.
-- There is no Godot project, no GDExtension build, and no `jumpnbump.h` yet.
-- **The legacy SDL 1.2 build below is the only way to actually play the game right now.**
+The legacy SDL 1.2 C build (`main.c`, `sdl/`, `modify/`, `data/`) is kept in the repo
+forever, not as a second way to play, but as the differential-test oracle the Zig core is
+checked against frame-by-frame (see `docs/porting-playbook.md`) -- see "The legacy SDL
+build (oracle)" below if you need to build or run it.
 
 See `backlog/tasks/` for per-task status and `docs/porting-playbook.md` /
-`docs/build-layout.md` for where this is headed.
+`docs/build-layout.md` for the full architecture.
 
-## Playing it today (legacy SDL build)
+## Playing it (Godot build)
 
-Requires SDL 1.2, SDL_mixer, SDL_net, zlib, and bzip2 dev packages. Debian/Ubuntu:
-
-```sh
-apt-get install libsdl1.2-dev libsdl-mixer1.2-dev libsdl-net1.2-dev zlib1g-dev libbz2-dev
-```
-
-(macOS: see `taskfiles/ci.yml`'s `ci:_install-macos-deps` for the Homebrew + from-source
-SDL_mixer/SDL_net setup used in CI.)
-
-Then build and run:
+Requires the pinned Godot version (see `.tool-versions`, installed via `mise`) available on
+`PATH` as `godot`.
 
 ```sh
-task check          # currently just runs `make`
-./jumpnbump
+task check      # boundary + test gates for the Godot build and the asset pipeline
+task game:run   # launch the game
 ```
-
-`make install` installs to `$(PREFIX)/games` and `$(PREFIX)/share/jumpnbump`
-(`PREFIX=/usr/local` by default). `make clean` cleans `sdl/`, `modify/`, `data/`, and the
-top-level objects/binaries.
 
 ### Controls
 
+Local multiplayer defaults (remappable in-game from the player-select menu):
+
 | Player | Keys |
 | --- | --- |
-| Dott  | `a`, `w`, `d` |
-| Jiffy | arrow keys |
-| Fizz  | `j`, `i`, `l` |
-| Mijji | numpad `4`, `8`, `6` |
+| Dott | arrow keys (left/right/up) |
+| Jiffy | `a`, `d`, `w` |
+| Fizz | `j`, `l`, `i` |
+| Mijji | numpad `4`, `6`, `8` |
 
-`f10` toggles windowed/fullscreen, `esc`/`f12` quits.
+A gamepad can also control a player (left stick or d-pad to move, face button to jump).
+Window size/fullscreen and mouse input are handled by Godot itself, not a custom flag.
 
 ### Custom levels, screensaver, and netplay
+
+These are legacy-build-only for now (TASK-016/017 track porting them to the Godot build):
 
 ```sh
 jumpnbump -dat levelname.dat            # load a custom level (see levelmaking/)
@@ -64,23 +60,46 @@ jumpnbump -port 7777 -net 1 <host_of_player1> <port_of_player1>   # player 2
 # -net 2/-net 3 add a 3rd/4th player the same way
 ```
 
+## The legacy SDL build (oracle)
+
+Not part of the default `task check` gate (TASK-015.05) -- build it on demand with
+`task legacy:build`, which just runs `make`. Requires SDL 1.2, SDL_mixer, SDL_net, zlib, and
+bzip2 dev packages. Debian/Ubuntu:
+
+```sh
+apt-get install libsdl1.2-dev libsdl-mixer1.2-dev libsdl-net1.2-dev zlib1g-dev libbz2-dev
+```
+
+(macOS: see `taskfiles/ci.yml`'s `ci:_install-macos-deps` for the Homebrew + from-source
+SDL_mixer/SDL_net setup used in CI.)
+
+```sh
+task legacy:build
+./jumpnbump
+```
+
+`make install` installs it to `$(PREFIX)/games` and `$(PREFIX)/share/jumpnbump`
+(`PREFIX=/usr/local` by default). `task legacy:clean` (`make clean`) cleans `sdl/`,
+`modify/`, `data/`, and the top-level objects/binaries. Its controls, custom-level,
+screensaver, and netplay flags/instructions are in the section above; `f10` toggles
+windowed/fullscreen, `esc`/`f12` quits.
+
 ## Building and testing
 
-`task check` is the single documented gate — today it runs the legacy `make` build.
-`taskfiles/ci.yml` wires the same command into GitHub Actions for both Linux and macOS
-(`task ci:linux-check`, `task ci:macos-check`).
+`task check` is the single documented gate: it runs the Godot build's boundary check
+(`task game:boundary-check`) and test suite (`task game:test`), plus the asset pipeline's
+reproducibility gates (`task assets:check`). `taskfiles/ci.yml` wires
+`task ci:linux-check`/`task ci:macos-check` into GitHub Actions for both platforms; both
+also verify the legacy oracle still builds (`task legacy:build`) before running `task check`.
 
 `core/build.zig` defines the Zig side, run from `core/` (`zig build <step>`):
 
-- `test` — Tier-A unit tests for ported modules (empty until a `core/*.zig` module lands)
-- `difftest` — Tier-B differential tests against the legacy C oracle (empty until the
-  corpus/harness lands)
+- `test` — Tier-A unit tests for ported modules
+- `difftest` — Tier-B differential tests against the legacy C oracle
 - `abi` — builds `core/abi.zig` as a static library
 - `abitest` — Tier-C ABI conformance tests
 
-`taskfiles/core.yml`, `taskfiles/extension.yml`, and `taskfiles/game.yml` are intentionally
-not created yet — they get wired into `taskfile.yml`'s `includes:` as each corresponding
-build lands.
+`task game:test` runs `game/tests/` headlessly through gdUnit4 (Tier-D, TASK-014.07).
 
 ## Architecture
 
@@ -89,7 +108,7 @@ build lands.
 | `core/` | Zig simulation core: physics, collision, AI, particles, game loop |
 | `include/` | `jumpnbump.h`, the frozen C ABI between `core/` and `extension/` |
 | `extension/` | godot-cpp GDExtension shim, forwarding 1:1 to the C ABI |
-| `game/` | Godot 4.7.1 project |
+| `game/` | Godot 4.7.1 project -- the primary way to play |
 | `tools/` | Asset pipeline + boundary/purity validator scripts |
 | `main.c`, `sdl/`, `modify/`, `data/` | Legacy SDL/C game — retained forever as the differential-test oracle |
 
